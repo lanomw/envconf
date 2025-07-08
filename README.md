@@ -30,6 +30,30 @@ vim.g.clipboard = {
 }
 ```
 
+### wsl2和windows剪切板互通win32yank方案
+``` bash
+curl -sLO https://github.com/equalsraf/win32yank/releases/latest/download/win32yank-x64.zip
+unzip win32yank-x64.zip && chmod +x win32yank.exe
+sudo mv win32yank.exe /usr/local/bin/
+```
+
+``` lua
+-- lua/config/options.lua
+vim.g.clipboard = {
+  name = "Win32Yank",
+  copy = {
+    ["+"] = "win32yank.exe -i --crlf",
+    ["*"] = "win32yank.exe -i --crlf",
+  },
+  paste = {
+    ["+"] = "win32yank.exe -o --lf",
+    ["*"] = "win32yank.exe -o --lf",
+  },
+  cache_enabled = 0,
+}
+```
+
+
 ## lua/plugins/conform.lua
 ```lua
 -- clang-format格式化配置，并指定.clang-format
