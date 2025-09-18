@@ -5,7 +5,7 @@
 scoop install 7zip git gsudo scoop-completion starship
 scoop install curl wget grep less sed touch fd fzf lazygit ripgrep
 scoop install gcc cmake make python clangd llvm
-scoop install pandoc wireshark quicklook SpaceSniffer
+scoop install snipaste pandoc wireshark quicklook SpaceSniffer
 ```
 
 ## 配置文件
