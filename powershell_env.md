@@ -1,4 +1,12 @@
-## powershel 环境配置
+# powershel 环境配置
+
+## 安装scoop
+管理员执行`Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+```shell
+irm get.scoop.sh -OutFile 'install.ps1'
+.\install.ps1 -RunAsAdmin -ScoopDir 'D:\Scoop'
+rm .\install.ps1
+```
 
 ## 软件包安装
 ```shell
