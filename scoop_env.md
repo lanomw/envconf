@@ -17,8 +17,8 @@ rm .\install.ps1
 ```shell
 scoop install 7zip git gsudo scoop-completion starship
 scoop install curl wget grep less sed touch fd fzf lazygit ripgrep
-scoop install gcc cmake make python clangd llvm
-scoop install snipaste pandoc wireshark quicklook SpaceSniffer
+scoop install gcc cmake make python llvm
+scoop install snipaste sumatrapdf pandoc windterm wireshark quicklook SpaceSniffer
 ```
 
 ## 配置文件
