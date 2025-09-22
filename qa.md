@@ -11,8 +11,16 @@ cmake -B build -G "MinGW Makefiles" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_C
 ```yaml
 CompileFlags:
   Add: [
-    # -nostdinc,                  # 禁止再搜 clang 内置目录
+    --target=x86_64-w64-mingw32,
     -isystem, D:/Scoop/apps/mingw/current/x86_64-w64-mingw32/include,
+    -isystem, D:/Scoop/apps/mingw/current/include,
   ]
-
+  Remove: [ # 过滤掉 GCC 专有选项
+    -m*, -fipa-*, -fno-ipa-*,
+    -mno-*, -momit-leaf-frame-pointer,
+    -fconserve-stack, -fno-var-tracking-assignments,
+    -mapcs, -mno-sched-prolog, -mthumb-interwork
+  ]
+Index:
+  StandardLibrary: Yes
 ```
