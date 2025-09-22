@@ -1,0 +1,68 @@
+{
+    "workbench.startupEditor": "none",
+
+	/************** 自动保存 ******************/
+    "files.autoSave": "afterDelay",
+	"files.autoSaveDelay": 200,
+
+	/************** 行号和标尺 ******************/
+	"editor.lineNumbers": "on", // "off", "relative"
+    "editor.rulers": [80, 120],
+
+	/************** 缩进和换行 ******************/
+	"editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    // "editor.wordWrap": "on",
+
+	/************** 外观 ******************/
+	"editor.renderControlCharacters": true, /* 是否显示控制字符：启用*/
+	"editor.renderWhitespace": "all", /* 显示 4 个空格是.... */
+	"editor.fontSize": 16, /* 代码字体大小*/
+	"editor.fontFamily": "'JetBrainsMono Nerd Font', Monaco, 'Courier New', monospace",
+    "workbench.colorTheme": "Dracula Theme",
+    "window.titleBarStyle": "custom",
+
+	/************** 文件空行 ******************/
+    // "files.trimTrailingWhitespace": true,
+    // "files.insertFinalNewline": true,
+    // "files.trimFinalNewlines": true,
+    
+	/************** 搜索 ******************/
+    "search.showLineNumbers": true, // 显示搜索结果所在行号
+    "search.smartCase": true, // 当搜索词为小写时，则不区分大小写进行搜索，否则区分大小写
+    "search.exclude": { // 配置在搜索中排除的文件和文件夹的glob模式
+        "build/": true,
+        ".map": true
+    },
+
+	/************** KeilAssistant ******************/
+    "KeilAssistant.MDK.Uv4Path": "D:/Keil_v5/UV4/UV4.exe",
+    "KeilAssistant.C51.Uv4Path": "D:/Keil_v5/UV4/UV4.exe",
+    
+	/************** format ******************/
+    "clang-format.executable": "D:/Scoop/apps/llvm/current/bin/clang-format.exe",
+    "clang-format.assumeFilename": "C:/Users/atk/.clang-format",
+    "[c]": {
+        "editor.defaultFormatter": "xaver.clang-format"
+    },
+
+	/************** 其它 ******************/
+    "makefile.configureOnOpen": true,
+    "git.path": "D:/Scoop/apps/git/current/bin/git",
+    "git.openRepositoryInParentFolders": "always",
+    "explorer.autoReveal": false,
+    "git.suggestSmartCommit": false,
+    "git.confirmSync": false,
+    "[cpp]": {
+        "editor.defaultFormatter": "xaver.clang-format"
+    },
+    "chat.commandCenter.enabled": false,
+    "workbench.sideBar.location": "right",
+    "workbench.activityBar.location": "bottom",
+    "files.exclude": {
+        "build": true,
+        "out": true,
+        "prebuilts": true
+    },
+}
