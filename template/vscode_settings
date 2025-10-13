@@ -30,6 +30,7 @@
     // "files.trimFinalNewlines": true,
 
 	/************** 搜索 ******************/
+    "search.useIgnoreFiles": false, // 搜索时是否应用.gitignore文件和.ignore目录
     "search.showLineNumbers": true, // 显示搜索结果所在行号
     "search.smartCase": true, // 当搜索词为小写时，则不区分大小写进行搜索，否则区分大小写
     "search.exclude": { // 配置在搜索中排除的文件和文件夹的glob模式
