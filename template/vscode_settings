@@ -81,6 +81,7 @@
     },
 
 	/************** 其它 ******************/
+    "editor.inlayHints.enabled": "off"
     "git.openRepositoryInParentFolders": "always",
     "git.suggestSmartCommit": false,
     "git.confirmSync": false,
