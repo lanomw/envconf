@@ -67,15 +67,23 @@
 	/************** makefile ******************/
     "makefile.configureOnOpen": true,
 
+	/************** msys2终端 ******************/
+    "terminal.integrated.defaultProfile.windows": "MSYS2",
+    "terminal.integrated.profiles.windows": {
+        "MSYS2": {
+            "path": "D:\\Scoop\\apps\\msys2\\current\\msys2_shell.cmd",
+            "args": ["-defterm", "-here", "-no-start", "-use-full-path", "-msys", "-shell", "zsh"],
+            "icon": "terminal-powershell"
+        },
+    },
+    "terminal.integrated.env.windows": {
+        "PATH": "D:\\Scoop\\apps\\mingw-winlibs-ucrt\\current\\bin;${env:PATH}"
+    },
+
 	/************** 其它 ******************/
     "git.openRepositoryInParentFolders": "always",
     "git.suggestSmartCommit": false,
     "git.confirmSync": false,
     "explorer.autoReveal": false,
     "chat.commandCenter.enabled": false,
-    "files.exclude": {
-        "out": true,
-        "build": true,
-        "prebuilts": true
-    },
 }
