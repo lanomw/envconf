@@ -20,6 +20,16 @@ scoop install curl wget grep less sed touch fd fzf lazygit ripgrep
 scoop install gcc cmake make python llvm
 scoop install snipaste sumatrapdf pandoc windterm wireshark quicklook SpaceSniffer
 ```
+注：如果使用msys环境则无需安装`gcc、cmake、make`
+
+
+### msys2
+```shell
+scoop install mingw-winlibs-ucrt msys2
+```
+
+msys2集成到`windows terminal`的命令行配置：`D:\Scoop\apps\msys2\current\msys2_shell.cmd -defterm -here -no-start -use-full-path -msys -shell zsh`
+
 
 ## 配置文件
 打开配置文件`notepad $PROFILE`后写入以下内容
