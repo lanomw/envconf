@@ -28,7 +28,7 @@ scoop install snipaste sumatrapdf pandoc windterm wireshark quicklook SpaceSniff
 scoop install mingw-winlibs-ucrt msys2
 ```
 
-添加环境变量使msys2继承windows系统变量`MSYS2_PATH_TYPE=inherit`
+取消`msys2_shell.cmd`中的`MSYS2_PATH_TYPE=inherit`注释使继承windows环境
 msys2集成到`windows terminal`的命令行配置：`D:\Scoop\apps\msys2\current\msys2_shell.cmd -defterm -here -no-start -use-full-path -msys -shell zsh`
 
 代理配置写入`~/.zprofile`
