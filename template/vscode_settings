@@ -76,6 +76,9 @@
             "icon": "terminal-powershell"
         },
     },
+    "terminal.integrated.env.windows": {
+        "PATH": "D:\\Scoop\\apps\\mingw-winlibs-ucrt\\current\\bin;${env:PATH}"
+    },
 
 	/************** 其它 ******************/
     "git.openRepositoryInParentFolders": "always",
