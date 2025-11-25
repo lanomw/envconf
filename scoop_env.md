@@ -28,8 +28,13 @@ scoop install snipaste sumatrapdf pandoc windterm wireshark quicklook SpaceSniff
 scoop install mingw-winlibs-ucrt msys2
 ```
 
+添加环境变量使msys2继承windows系统变量`MSYS2_PATH_TYPE=inherit`
 msys2集成到`windows terminal`的命令行配置：`D:\Scoop\apps\msys2\current\msys2_shell.cmd -defterm -here -no-start -use-full-path -msys -shell zsh`
 
+代理配置写入`~/.zprofile`
+```file
+export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 all_proxy=socks5://127.0.0.1:7897
+```
 
 ## 配置文件
 打开配置文件`notepad $PROFILE`后写入以下内容
