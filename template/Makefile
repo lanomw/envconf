@@ -46,4 +46,7 @@ clean:
 .PHONY := all clean
 
 # include 所有.d文件，使头文件依赖生效
--include $(DEPS)
+# 如果依赖文件列表不为空, 就直接包含(include)依赖文件列表
+ifneq ($(DEPS),)
+	include $(DEPS)
+endif
