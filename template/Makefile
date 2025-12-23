@@ -8,11 +8,11 @@ LDFLAGS 	:= -lpthread -lm
 
 # 输入
 SRC_DIR 	= 
-TARGET 		= app
 INCS = 
 LIBS = 
 
 # 输出
+TARGET 		= app
 OUT_DIR 	:= build
 BUILD_DIR 	:= $(OUT_DIR)/_build
 TARGET_DIR	:= $(OUT_DIR)/output
@@ -27,21 +27,23 @@ VPATH = $(SRC_DIR)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) | $(TARGET_DIR)
 # 	@echo "[AR] $(TARGET_DIR)/$(TARGET) $(LIBS)"
 # 	@$(AR) rcs $(TARGET_DIR)/$(TARGET) $^ $(LIBS)
 
 	@echo "[CC] $(TARGET_DIR)/$(TARGET) $(LIBS)"
 	@$(CC) $(LDFLAGS) $^ $(LIBS) -o $(TARGET_DIR)/$(TARGET)
 
-	@echo "\compile success\n"
+	@echo "\ncompile success\n"
 
-$(OBJS): $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR) $(TARGET_DIR)
+$(OBJS): $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	@echo "[CC] $<"
 	@$(CC) $(CFLAGS) $(INCS) -c $< -o $@
 
-$(BUILD_DIR):
+$(TARGET_DIR):
 	mkdir -p $(BUILD_DIR) $(TARGET_DIR)
+
+$(BUILD_DIR):
 	mkdir -p $(foreach dir,$(SRC_DIR),$(BUILD_DIR)/$(dir))
 
 clean:
