@@ -24,6 +24,20 @@ OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS = $(OBJS:.o=.d)
 VPATH = $(SRC_DIR)
 
+# 命令
+RM =
+MKDIR =
+
+# 环境兼容
+ifeq ($(OS), Windows_NT)
+	RM = cmd /c rd /s /q
+	MKDIR = mkdir
+else ifeq ($(shell uname -s), Linux)
+	LDFLAGS += -Llib/linux -L/usr/x86_64-w64-mingw32/lib -lglfw3 -lgdi32 -lopengl32 -limm32 -static
+	RM = rm -rf
+	MKDIR = mkdir -p
+endif
+
 
 all: $(TARGET)
 
