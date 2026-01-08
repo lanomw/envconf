@@ -16,11 +16,12 @@ rm .\install.ps1
 ## 安装软件包
 ```shell
 scoop install 7zip git gsudo scoop-completion starship
-scoop install curl wget grep less sed touch fd fzf lazygit ripgrep
-scoop install gcc cmake make python llvm
-scoop install snipaste sumatrapdf pandoc windterm wireshark quicklook SpaceSniffer
+scoop install busybox curl fzf
+scoop install mingw cmake make python llvm
+scoop install neovim luarocks fd lazygit ripgrep
+scoop install snipaste sumatrapdf pandoc windterm wireshark SpaceSniffer
 ```
-注：如果使用msys环境则无需安装`gcc、cmake、make`
+注：如果使用msys环境则无需安装`mingw、cmake、make`
 
 
 ### msys2
@@ -46,5 +47,6 @@ Set-PSReadLineOption -EditMode Emacs
 
 Import-Module scoop-completion
 
+'rm','cat','cp','mv','pwd','ps' | % { Remove-Alias $_ -Force -ErrorAction Ignore }
 New-Alias -Name l -Value "ls"
 ```
