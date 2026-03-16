@@ -19,9 +19,9 @@ TARGET_DIR	:= $(OUT_DIR)/output
 
 # 头文件路径、源文件、依赖
 INCS += -I. $(foreach dir,$(SRC_DIR),-I$(dir))
-SRCS = $(wildcard ./*.c $(foreach dir,$(SRC_DIR),$(dir)/*.c))
-OBJS = $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
-DEPS = $(OBJS:.o=.d)
+SRCS := $(wildcard ./*.c $(foreach dir,$(SRC_DIR),$(dir)/*.c))
+OBJS := $(subst /./,/, $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS)))
+DEPS := $(OBJS:.o=.d)
 VPATH = $(SRC_DIR)
 
 # 命令
