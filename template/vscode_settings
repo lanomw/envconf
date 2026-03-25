@@ -54,15 +54,38 @@
 
 	/************** clangd ******************/
     /**
-     * 需禁用c/c++插件，compile_commands.json推荐软连接或放在根目录下，方便clangd搜索
-     * 生成compile_commands.json
+     * 需禁用c/c++插件，生成compile_commands.json
      * 方案1: bear -- make
-     * 方案2: CMakeLists.txt 添加 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-     * 方案3: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON */
+     * 方案2: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON */
     "clangd.arguments": [
-        "--header-insertion=never",
+        // 后台索引（提升大型项目的响应速度）
+        "--background-index",
+        // 后台索引优先级设为低，不影响编辑
+        "--background-index-priority=low",
+        // 启用代码检查（基于clang-tidy，支持代码规范检查）
+        "--clang-tidy",
+        // 补全样式：detailed显示更详细的补全信息（如参数类型）
         "--completion-style=detailed",
+        // 代码风格 fallback：当项目无明确风格时，默认使用Google风格
+        "--fallback-style=Google",
+        // 关闭函数参数占位符（避免补全时自动插入`${1}`等占位符）
+        "--function-arg-placeholders=false",
+        // 禁止自动插入#include（如需手动控制头文件引入）
+        "--header-insertion=never",
+        // 重命名文件时无数量限制（默认可能限制大项目重命名）
+        "--rename-file-limit=0",
+        // 启用Clangd的配置文件 clangd/config.yaml
+        "--enable-config",
+        // PCH（预编译头）存储在内存中，提升解析速度
+        "--pch-storage=memory",
+        // 格式化输出日志（方便调试）
+        "--pretty",
+        // 【核心】指定compile_commands.json路径
         "--compile-commands-dir=${workspaceFolder}/build",
+        // 【核心】指定编译器路径（解决标准库头文件找不到的问题）
+        // 通配符匹配编译器路径（如ARM交叉编译器、x86编译器）
+        // 格式：--query-driver=编译器可执行文件的路径（支持*通配符）
+        // "--query-driver=D:/mingw64/bin"
     ],
 
 	/************** makefile ******************/
