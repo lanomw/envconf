@@ -44,7 +44,7 @@
     "KeilAssistant.C51.Uv4Path": "D:/Keil_v5/UV4/UV4.exe",
 
 	/************** format ******************/
-    "clang-format.assumeFilename": "~/.clang-format",
+    // .clang-format配置文件可放置于盘符根路径并设置为隐藏，由clangd自动查找
     "[c]": {
         "editor.defaultFormatter": "xaver.clang-format"
     },
@@ -56,7 +56,8 @@
     /**
      * 需禁用c/c++插件，生成compile_commands.json
      * 方案1: bear -- make
-     * 方案2: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON */
+     * 方案2: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+     * .clang-tidy配置文件可放置于盘符根路径并设置为隐藏，由clangd自动查找 */
     "clangd.arguments": [
         // 后台索引（提升大型项目的响应速度）
         "--background-index",
