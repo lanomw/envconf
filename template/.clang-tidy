@@ -1,0 +1,38 @@
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*,
+  cppcoreguidelines-*,
+  performance-*,
+  misc-*,
+  -clang-analyzer-deadcode.DeadStores,
+  -bugprone-unused-raii,
+  -bugprone-unused-return-value,
+  -bugprone-reserved-identifier,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -misc-unused-parameters,
+  -misc-unused-variable,
+  -misc-unused-using-decls,
+  -misc-use-internal-linkage,
+  -readability-*,
+  -modernize-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-pro-type-static-cast-downcast,
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-macro-to-enum,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-special-member-functions,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-const-cast,
+  -cppcoreguidelines-narrowing-conversions
+
+CheckOptions:
+  - key: bugprone-macro-parentheses.IgnoreMacros
+    value: true
+  - key: bugprone-unhandled-self-assignment.WarnOnlyIfThisHasSuspiciousField
+    value: true
+  - key: performance-unnecessary-value-param.AllowTrivial
+    value: true
