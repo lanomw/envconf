@@ -52,6 +52,9 @@
         "editor.defaultFormatter": "xaver.clang-format"
     },
 
+	/************** c/c++ clang-tidy ******************/
+    "C_Cpp.codeAnalysis.clangTidy.enabled": true,
+
 	/************** clangd ******************/
     /**
      * 需禁用c/c++插件，生成compile_commands.json
