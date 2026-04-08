@@ -40,6 +40,7 @@ export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 all_pr
 ## 配置文件
 打开配置文件`notepad $PROFILE`后写入以下内容
 ```shell
+$OutputEncoding = [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
 Invoke-Expression (&starship init powershell)
 
 Import-Module PSReadLine
