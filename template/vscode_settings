@@ -19,7 +19,7 @@
 	"editor.fontFamily": "'JetBrainsMono Nerd Font', Monaco, 'Courier New', monospace",
     "window.titleBarStyle": "custom",
     "workbench.startupEditor": "none",
-    "workbench.sideBar.location": "right",
+    // "workbench.sideBar.location": "right",
     "workbench.colorTheme": "Dracula Theme",
     "workbench.activityBar.location": "bottom",
     "workbench.iconTheme": "vscode-jetbrains-icon-theme-2023-dark",
@@ -114,5 +114,4 @@
     "git.suggestSmartCommit": false,
     "git.confirmSync": false,
     "explorer.autoReveal": false,
-    "chat.commandCenter.enabled": false,
 }
