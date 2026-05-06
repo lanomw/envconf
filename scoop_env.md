@@ -15,13 +15,15 @@ rm .\install.ps1
 
 ## 安装软件包
 ```shell
+scoop bucket add dorado https://github.com/chawyehsu/dorado
+
 scoop install 7zip git gsudo scoop-completion starship
 scoop install busybox curl fzf
-scoop install mingw cmake make python llvm
+scoop install cmake make python llvm-mingw
 scoop install neovim luarocks fd lazygit ripgrep
 scoop install snipaste sumatrapdf pandoc windterm wireshark SpaceSniffer
 ```
-注：如果使用msys环境则无需安装`mingw、cmake、make`
+注：如果使用msys环境则无需安装`llvm-mingw、cmake、make`
 
 
 ### msys2
