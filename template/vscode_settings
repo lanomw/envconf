@@ -108,9 +108,13 @@
             "icon": "terminal-powershell"
         },
     },
+
+	/************** 环境 ******************/
     "terminal.integrated.env.windows": {
-        "PATH": "D:\\Scoop\\apps\\mingw-winlibs-ucrt\\current\\bin;${env:PATH}"
+        "PATH": "D:/Scoop/apps/llvm-mingw/current/bin;${env:PATH}"
     },
+    "clangd.path": "D:/Scoop/apps/llvm-mingw/current/bin/clangd.exe",
+    "clang-format.executable": "D:/Scoop/apps/llvm-mingw/current/bin/clang-format.exe",
 
 	/************** 其它 ******************/
     "editor.inlayHints.enabled": "off",
