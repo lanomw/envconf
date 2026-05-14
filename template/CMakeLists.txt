@@ -93,3 +93,16 @@ if(WIN32)
         endif()
     endforeach()
 endif()
+
+# 编译并打包: cmake --build build --config Release --target package 
+# 创建打包配置 (ZIP格式)
+set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_GENERATOR ZIP)
+set(CPACK_ARCHIVE_ZIP)
+set(CPACK_PACKAGE_DIRECTORY ${CMAKE_SOURCE_DIR}/release)
+
+# 打包运行时输出目录的所有内容
+install(DIRECTORY ${OUTPUT_DIR}/ DESTINATION . FILES_MATCHING PATTERN "*")
+
+include(CPack)
