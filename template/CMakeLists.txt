@@ -66,3 +66,30 @@ if(WIN32)
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE m pthread)
 endif()
+
+# 拷贝MinGW运行时DLL到输出目录 (Windows)
+if(WIN32)
+    get_filename_component(COMPILER_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+    # MinGW运行时DLL白名单，添加新依赖时在此列表追加即可
+    set(MINGW_RUNTIME_DLLS
+        libwinpthread-1.dll
+        libstdc++-6.dll
+        libgcc_s_seh-1.dll
+        libgcc_s_dw2-1.dll
+        libiconv.dll
+        libintl.dll
+        libiconv-2.dll
+        libintl-8.dll
+        pthread.dll
+        msvcrt.dll
+        msvcr120.dll
+    )
+    foreach(DLL_NAME ${MINGW_RUNTIME_DLLS})
+        find_file(DLL_PATH NAMES ${DLL_NAME} PATHS ${COMPILER_DIR} ${COMPILER_DIR}/..)
+        if(DLL_PATH)
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DLL_PATH} ${OUTPUT_DIR}/
+            )
+        endif()
+    endforeach()
+endif()
