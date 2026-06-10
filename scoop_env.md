@@ -42,14 +42,29 @@ export https_proxy=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 all_pr
 ## 配置文件
 打开配置文件`notepad $PROFILE`后写入以下内容
 ```shell
+# ========== 基础设置（启动时必需，开销极小） ==========
 $OutputEncoding = [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
-Invoke-Expression (&starship init powershell)
-
-Import-Module PSReadLine
-Set-PSReadLineOption -EditMode Emacs
-
-Import-Module scoop-completion
+# $env:HTTP_PROXY = "http://127.0.0.1:7890"
+# $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 
 'rm','cat','cp','mv','pwd','ps' | % { Remove-Alias $_ -Force -ErrorAction Ignore }
 New-Alias -Name l -Value "ls"
+
+# Starship 初始化（本身就是异步的，保持原样）
+Invoke-Expression (&starship init powershell)
+
+# ========== 延迟加载区域 ==========
+# 注册 OnIdle 事件，在终端空闲时自动导入模块
+$action = {
+    # 导入 PSReadLine
+    Import-Module PSReadLine -ErrorAction Stop
+    Set-PSReadLineOption -EditMode Emacs
+    # 导入 scoop-completion
+    Import-Module scoop-completion -ErrorAction Stop
+    # 任务完成后解除事件注册，避免重复执行
+    Unregister-Event -SourceIdentifier ProfileIdle -Force
+}
+
+# 创建事件订阅（仅在 PowerShell 7+ 中支持 OnIdle）
+Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -SupportEvent -Action $action
 ```
