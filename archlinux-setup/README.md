@@ -107,9 +107,21 @@ sudo ./init.sh
 - 包列表：`git base-devel make cmake vim neovim tree docker curl wget openssh man-db man-pages which less unzip`，选 Zsh 时附加 `zsh zsh-completions`
 
 非 root 运行会自动 `sudo` 重跑。WSL 默认登录用户**只在全部步骤成功后**才写入，避免中途失败卡在新用户。回到 root：`wsl -u root` 或先 `exit`。
-- 目标用户（非 root）自动加入 `docker` 组
+- 目标用户（非 root）自动加入 docker 组；**需重新登录或 
+ewgrp docker 后才免 sudo 使用 docker**
 - **原生 Arch**：`systemctl enable docker`，失败时输出 `[ERR]` 提示
 - **WSL**：跳过 `systemctl enable`，输出失败原因提示，引导使用 Docker Desktop WSL 集成或手动启动 `dockerd`
+
+### Docker 镜像源
+
+- 仅在选择了"基础软件包安装"时才询问
+- 勾选后写入 `/etc/docker/daemon.json`（原文件备份为 `daemon.json.bak.<时间戳>`）
+- `registry-mirrors` 多源回退（已登记你提供的 `https://docker.1ms.run`）：
+  - `https://docker.1ms.run`
+  - `https://docker.mirrors.ustc.edu.cn`
+  - `https://hub-mirror.c.163.com`
+  - `https://mirror.baidubce.com`
+- 原生 Arch 下 `systemctl restart docker` 使其生效；WSL/无 systemd 下由 dockerd 启动时自动读取
 
 ### Zsh 美化
 

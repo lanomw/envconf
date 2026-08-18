@@ -21,6 +21,7 @@ CREATE_USER=false
 NEW_USERNAME=""
 MIRROR_PROVIDER="official"
 INSTALL_BASE=false
+DOCKER_MIRROR=false
 INSTALL_LOCALE=false
 INSTALL_FONTS=false
 INSTALL_ZSH=false
@@ -30,6 +31,7 @@ WSL_SYSTEMD=false
 TARGET_USER=""
 TARGET_HOME=""
 WSL_PENDING_DEFAULT_USER=""
+WSL_DEFAULT_USER=false
 
 # --------------------------- 工具函数 ---------------------------
 info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
@@ -37,6 +39,49 @@ ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERR]${NC}  $*"; }
 die()   { err "$*"; exit 1; }
+
+# 需用户在脚本结束后处理的事项，分三类统一收集到末尾打印，避免淹没在执行日志里
+#   ACTIONS_NOW    : 需用户立即手动操作（如 newgrp docker、重登加载 zsh）
+#   ACTIONS_REBOOT : 重启/重连后自动生效，无需用户操作（仅供知晓）
+#   FAILURES       : 安装或配置失败但脚本继续的项，便于复查
+ACTIONS_NOW=()
+ACTIONS_REBOOT=()
+FAILURES=()
+postwarn()      { ACTIONS_NOW+=("$*"); }      # 兼容旧调用，按"需立即处理"归类
+postwarn_now()  { ACTIONS_NOW+=("$*"); }
+postwarn_reboot(){ ACTIONS_REBOOT+=("$*"); }
+record_failure(){ FAILURES+=("$*"); }
+
+print_postaction_summary() {
+    local i w
+    if [[ ${#FAILURES[@]} -gt 0 ]]; then
+        echo ""
+        heading "执行失败项汇总（脚本已继续，请复查后手动补装/修复）"
+        i=1
+        for w in "${FAILURES[@]}"; do
+            echo -e "${RED}$i. $w${NC}"
+            i=$((i+1))
+        done
+    fi
+    if [[ ${#ACTIONS_NOW[@]} -gt 0 ]]; then
+        echo ""
+        heading "需立即处理（请现在执行）"
+        i=1
+        for w in "${ACTIONS_NOW[@]}"; do
+            echo -e "${YELLOW}$i. $w${NC}"
+            i=$((i+1))
+        done
+    fi
+    if [[ ${#ACTIONS_REBOOT[@]} -gt 0 ]]; then
+        echo ""
+        heading "重启/重连后自动生效（无需操作，仅供知晓）"
+        i=1
+        for w in "${ACTIONS_REBOOT[@]}"; do
+            echo -e "${CYAN}$i. $w${NC}"
+            i=$((i+1))
+        done
+    fi
+}
 
 heading() {
     echo ""
@@ -50,7 +95,7 @@ confirm() {
     local prompt="$1"
     local answer
     while true; do
-        read -rp "$(echo -e "${YELLOW}${prompt}${NC} (y/n) [y]: ")" answer
+        read -rp "$(echo -e "${YELLOW}${prompt}${NC} (Y/n): ")" answer
         if [[ -z "$answer" ]]; then
             answer="y"
         fi
@@ -58,6 +103,23 @@ confirm() {
             [Yy]|[Yy][Ee][Ss]) return 0 ;;
             [Nn]|[Nn][Oo])     return 1 ;;
             *) echo "请输入 y 或 n（直接回车视为 y）" ;;
+        esac
+    done
+}
+
+# 直接回车视为 n（用于默认不启用的选项）
+confirm_no() {
+    local prompt="$1"
+    local answer
+    while true; do
+        read -rp "$(echo -e "${YELLOW}${prompt}${NC} (y/N): ")" answer
+        if [[ -z "$answer" ]]; then
+            answer="n"
+        fi
+        case "$answer" in
+            [Yy]|[Yy][Ee][Ss]) return 0 ;;
+            [Nn]|[Nn][Oo])     return 1 ;;
+            *) echo "请输入 y 或 n（直接回车视为 n）" ;;
         esac
     done
 }
@@ -95,7 +157,7 @@ target_group() {
     id -gn "$TARGET_USER"
 }
 
-# 是否允许作为“环境配置目标”：root，或 uid>=1000 的普通用户
+# 是否允许作为"环境配置目标"：root，或 uid>=1000 的普通用户
 is_configurable_user() {
     local user="$1"
     local uid
@@ -128,17 +190,14 @@ assert_target() {
     if ! is_configurable_user "$TARGET_USER"; then
         die "拒绝配置系统账户 $TARGET_USER (uid=$(id -u "$TARGET_USER"))，请选择普通用户或 root"
     fi
-
     TARGET_HOME="$(user_home_of "$TARGET_USER")"
     if [[ -z "$TARGET_HOME" || "$TARGET_HOME" == "/" ]]; then
         die "目标用户 $TARGET_USER 家目录非法: '$TARGET_HOME'"
     fi
-
     if [[ ! -d "$TARGET_HOME" ]]; then
         info "家目录不存在，正在创建: $TARGET_HOME"
         install -d -o "$TARGET_USER" -g "$(target_group)" -m 700 "$TARGET_HOME"
     fi
-
     local owner
     owner="$(stat -c '%U' "$TARGET_HOME")"
     if [[ "$owner" != "$TARGET_USER" ]]; then
@@ -205,7 +264,7 @@ wsl_conf_set() {
 #  询问阶段
 # =============================================================================
 ask_create_user() {
-    heading "步骤 1/9 — 用户配置"
+    heading "步骤 1/10 — 用户配置"
     if ! is_root; then
         warn "当前不是 root 用户，跳过用户创建；目标用户为当前用户"
         TARGET_USER="$(id -un)"
@@ -242,6 +301,9 @@ ask_create_user() {
         TARGET_USER="$NEW_USERNAME"
         TARGET_HOME="/home/$NEW_USERNAME"
         info "将创建用户 $TARGET_USER，后续 Zsh / NeoVim 等用户级配置会写入 $TARGET_HOME"
+        if is_wsl && confirm_no "是否将 $NEW_USERNAME 设为 WSL 默认登录用户（多用户场景建议选 n）"; then
+            WSL_DEFAULT_USER=true
+        fi
     else
         CREATE_USER=false
         NEW_USERNAME=""
@@ -288,7 +350,7 @@ mirror_label() {
 }
 
 ask_mirror() {
-    heading "步骤 2/9 — 镜像源配置"
+    heading "步骤 2/10 — 镜像源配置"
     echo "  1) 官方源"
     echo "  2) 清华源"
     echo "  3) 中科大源"
@@ -318,47 +380,53 @@ ask_mirror() {
 }
 
 ask_base_software() {
-    heading "步骤 3/9 — 基础软件包安装"
-    if confirm "是否安装基础开发软件 (git, curl, wget, openssh, make, cmake, vim, neovim, tree, docker, man)?"; then
+    heading "步骤 3/10 — 基础软件包安装"
+    if confirm "是否安装基础开发软件 (sudo, git, curl, wget, openssh, make, cmake, vim, neovim, tree, docker, man)?"; then
         INSTALL_BASE=true
     fi
 }
 
+ask_docker_mirror() {
+    heading "步骤 4/10 — Docker 镜像源"
+    if ! $INSTALL_BASE; then
+        DOCKER_MIRROR=false
+        return 0
+    fi
+    if confirm "是否配置 Docker 国内镜像源（多源回退，自动写入推荐源）"; then
+        DOCKER_MIRROR=true
+    fi
+}
+
 ask_locale() {
-    heading "步骤 4/9 — Locale"
+    heading "步骤 5/10 — Locale"
     if confirm "是否配置 Locale (en_US.UTF-8 + zh_CN.UTF-8)"; then
         INSTALL_LOCALE=true
     fi
 }
 
 ask_zsh() {
-    heading "步骤 5/9 — Zsh 配置"
+    heading "步骤 6/10 — Zsh 配置"
     if confirm "是否安装并美化 Zsh (root 与目标用户均切换为 zsh)?"; then
         INSTALL_ZSH=true
     fi
 }
 
 ask_fonts() {
-    heading "步骤 6/9 — 字体"
+    heading "步骤 7/10 — 字体"
     if confirm "是否安装 Nerd Font / 中文字体 (p10k 图标与中文显示)"; then
         INSTALL_FONTS=true
     fi
 }
 
 ask_nvim() {
-    heading "步骤 7/9 — NeoVim (LazyVim) 配置"
+    heading "步骤 8/10 — NeoVim (LazyVim) 配置"
     if confirm "是否配置 NeoVim (LazyVim)"; then
         INSTALL_NEOVIM=true
     fi
 }
 
 ask_aur() {
-    heading "步骤 8/9 — AUR 助手 (yay)"
-    if [[ "$TARGET_USER" == "root" ]]; then
-        warn "目标用户是 root，跳过 yay（makepkg 不能以 root 运行）"
-        INSTALL_AUR=false
-        return 0
-    fi
+    heading "步骤 9/10 — AUR 助手 (yay)"
     if confirm "是否为 $TARGET_USER 安装 AUR 助手 yay"; then
         INSTALL_AUR=true
     fi
@@ -369,7 +437,7 @@ ask_wsl_systemd() {
         WSL_SYSTEMD=false
         return 0
     fi
-    heading "步骤 9/9 — WSL systemd"
+    heading "步骤 10/10 — WSL systemd"
     if confirm "是否在 /etc/wsl.conf 启用 systemd"; then
         WSL_SYSTEMD=true
     fi
@@ -378,23 +446,29 @@ ask_wsl_systemd() {
 show_summary() {
     plan_target
 
-    local create_user_status mirror_status base_status locale_status font_status zsh_status nvim_status aur_status wsl_status
-    $CREATE_USER    && create_user_status="${GREEN}是 ($NEW_USERNAME)${NC}" || create_user_status="${RED}否${NC}"
+    local create_user_status mirror_status base_status docker_status locale_status font_status zsh_status nvim_status aur_status wsl_status wsl_default_user_status
+    $CREATE_USER    && create_user_status="是 ($NEW_USERNAME)" || create_user_status="否"
     if [[ "$MIRROR_PROVIDER" == "official" ]]; then
-        mirror_status="${GREEN}官方源（不改配置文件）${NC}"
+        mirror_status="官方源（不改配置文件）"
     else
-        mirror_status="${GREEN}$(mirror_label "$MIRROR_PROVIDER")${NC}"
+        mirror_status="$(mirror_label "$MIRROR_PROVIDER")"
     fi
-    $INSTALL_BASE   && base_status="${GREEN}是${NC}"    || base_status="${RED}否${NC}"
-    $INSTALL_LOCALE && locale_status="${GREEN}是${NC}"  || locale_status="${RED}否${NC}"
-    $INSTALL_FONTS  && font_status="${GREEN}是${NC}"    || font_status="${RED}否${NC}"
-    $INSTALL_ZSH    && zsh_status="${GREEN}是${NC}"    || zsh_status="${RED}否${NC}"
-    $INSTALL_NEOVIM && nvim_status="${GREEN}是${NC}"   || nvim_status="${RED}否${NC}"
-    $INSTALL_AUR    && aur_status="${GREEN}是 (yay)${NC}" || aur_status="${RED}否${NC}"
+    $INSTALL_BASE   && base_status="是"    || base_status="否"
+    $DOCKER_MIRROR  && docker_status="是"  || docker_status="否"
+    $INSTALL_LOCALE && locale_status="是"  || locale_status="否"
+    $INSTALL_FONTS  && font_status="是"    || font_status="否"
+    $INSTALL_ZSH    && zsh_status="是"     || zsh_status="否"
+    $INSTALL_NEOVIM && nvim_status="是"    || nvim_status="否"
+    $INSTALL_AUR    && aur_status="是 (yay)" || aur_status="否"
     if is_wsl; then
-        $WSL_SYSTEMD && wsl_status="${GREEN}是${NC}" || wsl_status="${RED}否${NC}"
+        $WSL_SYSTEMD && wsl_status="是" || wsl_status="否"
     else
-        wsl_status="${RED}非 WSL${NC}"
+        wsl_status="非 WSL"
+    fi
+    if is_wsl && $CREATE_USER && $WSL_DEFAULT_USER; then
+        wsl_default_user_status="是 ($NEW_USERNAME)"
+    else
+        wsl_default_user_status="否"
     fi
 
     echo ""
@@ -402,21 +476,19 @@ show_summary() {
     echo -e "${CYAN}配置确认表${NC}"
     echo -e "${CYAN}========================================${NC}"
     echo ""
-    echo -e "${BOLD}|--------------------------------|----------|${NC}"
-    echo -e "${BOLD}| 配置项                         | 状态     |${NC}"
-    echo -e "${BOLD}|--------------------------------|----------|${NC}"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "创建普通用户"    "$create_user_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "镜像源"          "$mirror_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "安装基础软件包"  "$base_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "配置 Locale"     "$locale_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "安装并美化 Zsh"  "$zsh_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "安装 Nerd 字体"  "$font_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "配置 NeoVim"     "$nvim_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "安装 yay"        "$aur_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "WSL systemd"     "$wsl_status"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "目标配置用户"    "${GREEN}$TARGET_USER${NC}"
-    printf "${BOLD}| %-30s | %-8b\n${NC}" "目标配置家目录"  "${GREEN}$TARGET_HOME${NC}"
-    echo -e "${BOLD}|--------------------------------|----------|${NC}"
+    echo -e "  创建普通用户      : ${GREEN}${create_user_status}${NC}"
+    echo -e "  镜像源            : ${GREEN}${mirror_status}${NC}"
+    echo -e "  安装基础软件包    : ${GREEN}${base_status}${NC}"
+    echo -e "  Docker 镜像源     : ${GREEN}${docker_status}${NC}"
+    echo -e "  配置 Locale       : ${GREEN}${locale_status}${NC}"
+    echo -e "  安装并美化 Zsh    : ${GREEN}${zsh_status}${NC}"
+    echo -e "  安装 Nerd 字体    : ${GREEN}${font_status}${NC}"
+    echo -e "  配置 NeoVim       : ${GREEN}${nvim_status}${NC}"
+    echo -e "  安装 yay          : ${GREEN}${aur_status}${NC}"
+    echo -e "  WSL systemd       : ${GREEN}${wsl_status}${NC}"
+    echo -e "  WSL 默认登录用户  : ${GREEN}${wsl_default_user_status}${NC}"
+    echo -e "  目标配置用户      : ${GREEN}${TARGET_USER}${NC}"
+    echo -e "  目标配置家目录    : ${GREEN}${TARGET_HOME}${NC}"
     echo ""
 
     if [[ "$TARGET_USER" == "root" ]]; then
@@ -428,6 +500,11 @@ show_summary() {
 #  执行阶段
 # =============================================================================
 enable_wheel_sudo() {
+    # 确保 /etc/sudoers 启用 sudoers.d 目录（Arch 默认有，缺则补）
+    if [[ -f /etc/sudoers ]] && ! grep -qE '^[#@]\s*includedir\s+/etc/sudoers\.d' /etc/sudoers; then
+        printf '\n@includedir /etc/sudoers.d\n' >> /etc/sudoers
+    fi
+
     local dropin="/etc/sudoers.d/99-wheel"
     if [[ -d /etc/sudoers.d ]]; then
         if [[ ! -f "$dropin" ]]; then
@@ -435,16 +512,20 @@ enable_wheel_sudo() {
             chmod 440 "$dropin"
             ok "已写入 $dropin，启用 wheel 组 sudo"
         fi
-        return 0
-    fi
-
-    if [[ -f /etc/sudoers ]]; then
+    elif [[ -f /etc/sudoers ]]; then
         if grep -qE '^#?\s*%wheel ALL=\(ALL:ALL\) ALL' /etc/sudoers; then
             sed -i -E 's/^#?\s*%wheel ALL=\(ALL:ALL\) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
             ok "已启用 wheel 组的 sudo 权限"
         elif ! grep -q '^%wheel ALL=(ALL:ALL) ALL' /etc/sudoers; then
             echo '%wheel ALL=(ALL:ALL) ALL' >> /etc/sudoers
             ok "已追加 wheel 组的 sudo 权限"
+        fi
+    fi
+
+    # 校验 sudoers 语法，避免写入坏配置导致 sudo 全局失效
+    if command -v visudo >/dev/null 2>&1; then
+        if ! visudo -cf /etc/sudoers >/dev/null 2>&1; then
+            warn "visudo 校验 /etc/sudoers 失败，请手动检查 sudoers 配置"
         fi
     fi
 }
@@ -462,7 +543,7 @@ exec_create_user() {
 
     enable_wheel_sudo
 
-    if is_wsl; then
+    if is_wsl && $WSL_DEFAULT_USER; then
         WSL_PENDING_DEFAULT_USER="$NEW_USERNAME"
         info "WSL 默认登录用户将在全部步骤成功后再写入，避免中途失败卡在新用户"
     fi
@@ -590,8 +671,8 @@ exec_mirror() {
     write_mirrorlist "$MIRROR_PROVIDER"
     ensure_archlinuxcn_repo
 
-    pacman-key --init || warn "pacman-key --init 失败，继续尝试"
-    pacman-key --populate archlinux || warn "pacman-key --populate archlinux 失败，继续尝试"
+    pacman-key --init || { warn "pacman-key --init 失败，继续尝试"; record_failure "pacman-key --init 失败，可能影响包签名校验"; }
+    pacman-key --populate archlinux || { warn "pacman-key --populate archlinux 失败，继续尝试"; record_failure "pacman-key --populate archlinux 失败，可能影响包签名校验"; }
 
     if ! pacman_sync; then
         die "软件源同步失败。请检查网络后重跑本脚本（可安全重跑，不会重复创建用户）"
@@ -599,6 +680,7 @@ exec_mirror() {
 
     if ! pacman -S --needed --noconfirm archlinuxcn-keyring; then
         warn "archlinuxcn-keyring 安装失败，后续 archlinuxcn 软件可能无法签名校验"
+        record_failure "archlinuxcn-keyring 安装失败，请手动执行: pacman -S archlinuxcn-keyring"
     else
         pacman-key --populate archlinuxcn 2>/dev/null || true
     fi
@@ -608,7 +690,7 @@ exec_mirror() {
 
 exec_base_software() {
     info "安装基础软件包 …"
-    local pkgs=(git base-devel make cmake vim neovim tree docker curl wget openssh man-db man-pages which less unzip)
+    local pkgs=(sudo git base-devel make cmake vim neovim tree docker curl wget openssh man-db man-pages which less unzip)
 
     $INSTALL_ZSH && pkgs+=(zsh zsh-completions)
 
@@ -616,27 +698,67 @@ exec_base_software() {
         info "检测到 WSL 环境"
     fi
 
-    pacman -S --needed --noconfirm "${pkgs[@]}"
+    if pacman -S --needed --noconfirm "${pkgs[@]}"; then
+        ok "基础软件包安装完成"
+    else
+        record_failure "基础软件包安装失败，请手动执行: pacman -S ${pkgs[*]}"
+        warn "基础软件包安装失败，脚本继续（后续依赖可能缺失）"
+        return 0
+    fi
 
     assert_target
 
     if [[ "$TARGET_USER" != "root" ]]; then
-        usermod -aG docker "$TARGET_USER" 2>/dev/null || warn "无法将 $TARGET_USER 加入 docker 组"
+        if usermod -aG docker "$TARGET_USER" 2>/dev/null; then
+            postwarn_now "$TARGET_USER 已加入 docker 组，需重新登录或执行 'newgrp docker' 后才能免 sudo 使用 docker"
+        else
+            record_failure "无法将 $TARGET_USER 加入 docker 组"
+        fi
     fi
 
     if is_wsl; then
-        warn "WSL 环境跳过 systemctl enable docker（失败提示：systemd 不可用）"
-        warn "如需在 WSL 使用 docker，请安装 Docker Desktop 并启用 WSL 集成，或在 WSL 内手动启动 dockerd"
+        record_failure "WSL 环境未执行 systemctl enable docker（systemd 不可用）"
+        postwarn_now "如需在 WSL 使用 docker：安装 Docker Desktop 并启用 WSL 集成，或在 WSL 内手动启动 dockerd"
     else
         if ! systemctl enable docker; then
             err "systemctl enable docker 失败"
-            warn "请检查 systemd 是否可用；可稍后手动执行: systemctl enable --now docker"
+            record_failure "systemctl enable docker 失败，请手动执行: systemctl enable --now docker"
         else
             ok "docker 服务已启用"
         fi
     fi
 
-    ok "基础软件包安装完成"
+exec_docker_mirror() {
+    if ! $DOCKER_MIRROR; then
+        return 0
+    fi
+    info "配置 Docker 国内镜像源 …"
+    local cfg="/etc/docker"
+    install -d -m 755 "$cfg"
+    if [[ -f "$cfg/daemon.json" ]]; then
+        cp "$cfg/daemon.json" "$cfg/daemon.json.bak.$(date +%s)"
+        warn "已备份原 daemon.json"
+    fi
+    cat << 'DOCKER_EOF' > "$cfg/daemon.json"
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.mirrors.ustc.edu.cn",
+    "https://hub-mirror.c.163.com",
+    "https://mirror.baidubce.com"
+  ]
+}
+DOCKER_EOF
+    if ! is_wsl && command -v systemctl >/dev/null 2>&1; then
+        if systemctl restart docker 2>/dev/null; then
+            ok "docker 服务已重启加载镜像源"
+        else
+            record_failure "docker 重启加载镜像源失败，请手动执行: systemctl restart docker"
+        fi
+    else
+        postwarn_reboot "WSL/无 systemd：daemon.json 已写入，启动 dockerd 时自动读取生效（无需手动操作）"
+    fi
+    ok "Docker 镜像源已写入 /etc/docker/daemon.json"
 }
 
 exec_locale() {
@@ -649,7 +771,7 @@ exec_locale() {
             echo "${loc} UTF-8" >> /etc/locale.gen
         fi
     done
-    locale-gen
+    locale-gen || { record_failure "locale-gen 失败，Locale 可能未生效"; warn "locale-gen 执行失败，locale 配置可能未生效"; return 0; }
     printf '%s\n' 'LANG=en_US.UTF-8' > /etc/locale.conf
     ok "Locale 已写入 /etc/locale.conf (LANG=en_US.UTF-8)，已生成中英 UTF-8"
 }
@@ -658,42 +780,28 @@ exec_fonts() {
     info "安装字体 (Meslo Nerd Font + 中文/Emoji) …"
     if ! pacman -S --needed --noconfirm ttf-meslo-nerd noto-fonts-cjk noto-fonts-emoji; then
         warn "部分字体安装失败，p10k 图标或中文可能显示异常"
+        record_failure "字体安装失败 (ttf-meslo-nerd / noto-fonts-cjk / noto-fonts-emoji)，请手动执行: pacman -S ttf-meslo-nerd noto-fonts-cjk noto-fonts-emoji"
         return 0
     fi
     if is_wsl; then
-        warn "WSL: 请在 Windows Terminal → 配置文件 → 外观 → 字体 选择 MesloLGS NF"
+        postwarn_now "WSL:请在 Windows Terminal → 配置文件 → 外观 → 字体 选择 MesloLGS NF"
     fi
     ok "字体安装完成"
 }
 
 exec_aur() {
     assert_target
-    if [[ "$TARGET_USER" == "root" ]]; then
-        warn "目标是 root，跳过 yay"
-        return 0
-    fi
     if command -v yay >/dev/null 2>&1; then
         info "yay 已安装，跳过"
         return 0
     fi
 
-    info "为 $TARGET_USER 安装 yay (AUR) …"
-    pacman -S --needed --noconfirm git base-devel
-
-    local work="/tmp/yay-bin.$$"
-    rm -rf "$work"
-    install -d -o "$TARGET_USER" -g "$(target_group)" "$work"
-    if ! runas_target "git clone --depth=1 https://aur.archlinux.org/yay-bin.git '$work/yay-bin'"; then
-        warn "克隆 yay-bin 失败"
-        rm -rf "$work"
+    # yay 已收录在 archlinuxcn 仓库，直接用 pacman 全局安装；软件全局可用，无需 makepkg
+    info "安装 yay（来自 archlinuxcn 仓库）…"
+    if ! pacman -S --needed --noconfirm yay; then
+        record_failure "yay 安装失败：请确认 archlinuxcn 仓库已配置后手动执行: pacman -S yay"
         return 0
     fi
-    if ! runas_target "cd '$work/yay-bin' && makepkg -si --noconfirm"; then
-        warn "makepkg 安装 yay 失败（可能需要 $TARGET_USER 的 sudo 密码）"
-        rm -rf "$work"
-        return 0
-    fi
-    rm -rf "$work"
     ok "yay 安装完成"
 }
 
@@ -703,7 +811,7 @@ exec_wsl_systemd() {
     fi
     info "写入 /etc/wsl.conf [boot] systemd=true"
     wsl_conf_set "boot" "systemd" "true"
-    warn "请在 PowerShell 执行: wsl --shutdown   然后重开 WSL 后 systemd 生效"
+    postwarn_reboot "WSL systemd 已写入 /etc/wsl.conf，wsl --shutdown 后重开自动生效"
     ok "WSL systemd 已写入"
 }
 
@@ -712,9 +820,7 @@ apply_wsl_default_user() {
         return 0
     fi
     wsl_conf_set "user" "default" "$WSL_PENDING_DEFAULT_USER"
-    warn "WSL 默认登录用户已设为 $WSL_PENDING_DEFAULT_USER（全部步骤成功后才写入）"
-    warn "请在 PowerShell 执行: wsl --terminate <发行版名>  然后重开窗口生效"
-    warn "若要回到 root:  wsl -u root   或  wsl -u root -- ./init.sh"
+    postwarn_reboot "WSL 默认登录用户已设为 $WSL_PENDING_DEFAULT_USER，wsl --shutdown 后重开自动生效"
 }
 
 exec_zsh() {
@@ -722,7 +828,11 @@ exec_zsh() {
     info "配置 Zsh (目标: $TARGET_USER , 家目录: $TARGET_HOME) …"
 
     if ! command -v zsh &>/dev/null; then
-        pacman -S --needed --noconfirm zsh zsh-completions
+        if ! pacman -S --needed --noconfirm zsh zsh-completions; then
+            record_failure "zsh 安装失败，Zsh 配置将跳过"
+            warn "zsh 安装失败，跳过 Zsh 配置"
+            return 0
+        fi
     fi
 
     ensure_zsh_in_shells
@@ -743,7 +853,8 @@ exec_zsh() {
         dest="$zsh_dir/$name"
         if [[ ! -d "$dest/.git" ]]; then
             runas_target "git clone --depth=1 '$url' '$dest'" \
-                || { warn "以 $TARGET_USER 克隆失败，改用当前用户克隆到 $dest"; git clone --depth=1 "$url" "$dest"; }
+                || { warn "以 $TARGET_USER 克隆失败，改用当前用户克隆到 $dest"; git clone --depth=1 "$url" "$dest" \
+                    || { record_failure "zsh 插件 $name 克隆失败，请手动安装"; warn "zsh 插件 $name 克隆失败"; }; }
         fi
     done
 
@@ -798,12 +909,56 @@ ZSHCFG
 
     chown -R "$TARGET_USER:$(target_group)" "$TARGET_HOME/.zshrc" "$zsh_dir"
 
-    chsh -s /bin/zsh "$TARGET_USER"
+    chsh -s /bin/zsh "$TARGET_USER" 2>/dev/null || { warn "$TARGET_USER 切换默认 shell 为 zsh 失败"; record_failure "$TARGET_USER 切换 zsh 失败，请手动执行: chsh -s /bin/zsh $TARGET_USER"; }
     if is_root && [[ "$(whoami)" != "$TARGET_USER" ]]; then
-        chsh -s /bin/zsh root 2>/dev/null || warn "root 切换 zsh 失败"
+        chsh -s /bin/zsh root 2>/dev/null || { warn "root 切换 zsh 失败，su - 后仍为原 shell"; record_failure "root 切换 zsh 失败，请手动执行: chsh -s /bin/zsh root"; }
+        if [[ ! -f /root/.zshrc ]]; then
+            cat << 'ZSHCFG' > /root/.zshrc
+# ============================
+#  Zsh 配置 — 美化版 (root)
+# ============================
+export PATH=$HOME/.local/bin:$PATH
+
+source $HOME/.zsh/powerlevel10k/powerlevel10k.zsh-theme
+
+source $HOME/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
+source $HOME/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+setopt AUTO_CD
+setopt CORRECT
+setopt NO_BEEP
+
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_REDUCE_BLANKS
+
+alias ll='ls -alF --color=auto'
+alias la='ls -A --color=auto'
+alias l='ls -CF --color=auto'
+alias grep='grep --color=auto'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+autoload -Uz compinit && compinit
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
+
+[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
+[[ -f ~/.zsh_env ]] && source ~/.zsh_env
+ZSHCFG
+            install -d -o root -g root /root/.zsh
+            cp -r "$TARGET_HOME/.zsh/powerlevel10k" /root/.zsh/ 2>/dev/null || true
+            cp -r "$TARGET_HOME/.zsh/zsh-autosuggestions" /root/.zsh/ 2>/dev/null || true
+            cp -r "$TARGET_HOME/.zsh/zsh-syntax-highlighting" /root/.zsh/ 2>/dev/null || true
+            ok "已为 root 创建 .zshrc 并复制插件"
+        fi
     fi
 
-    ok "Zsh 美化配置完成 (请首次进入 zsh 后按 p10k 提示完成个性化)"
+    postwarn_now "Zsh 已配置：注销重新登录或执行 'exec zsh' 加载；首次进入会触发 p10k 个性化向导"
+    ok "Zsh 美化配置完成"
 }
 
 exec_nvim() {
@@ -812,7 +967,7 @@ exec_nvim() {
 
     info "安装 LazyVim 前置依赖 …"
     local deps=(ripgrep fd unzip lazygit fzf nodejs npm gcc make)
-    pacman -S --needed --noconfirm "${deps[@]}" || warn "部分 LazyVim 依赖安装失败，首次启动可能报缺工具"
+    pacman -S --needed --noconfirm "${deps[@]}" || { warn "部分 LazyVim 依赖安装失败，首次启动可能报缺工具"; record_failure "LazyVim 依赖安装失败 (ripgrep/fd/lazygit/fzf/nodejs 等)，请手动安装"; }
 
     local nvim_dir="$TARGET_HOME/.config/nvim"
     local share_dir="$TARGET_HOME/.local/share/nvim"
@@ -844,22 +999,26 @@ exec_nvim() {
     done
 
     runas_target "git clone --depth=1 https://github.com/LazyVim/starter '$nvim_dir'" \
-        || { warn "以 $TARGET_USER 克隆失败，改用当前用户克隆到 $nvim_dir"; git clone --depth=1 https://github.com/LazyVim/starter "$nvim_dir"; }
+        || { warn "以 $TARGET_USER 克隆失败，改用当前用户克隆到 $nvim_dir"; git clone --depth=1 https://github.com/LazyVim/starter "$nvim_dir" \
+            || { record_failure "NeoVim LazyVim 克隆失败，请手动执行: git clone https://github.com/LazyVim/starter $nvim_dir"; return 0; }; }
     rm -rf "$nvim_dir/.git"
 
     chown -R "$TARGET_USER:$(target_group)" "$nvim_dir"
 
-    ok "NeoVim LazyVim 配置完成 (首次 nvim 会自动下载插件，请保持网络畅通)"
+    postwarn_now "NeoVim: 首次 'nvim' 会自动下载 LazyVim 插件，请保持网络畅通"
+    ok "NeoVim LazyVim 配置完成"
 }
 
 # =============================================================================
 #  主流程
 # =============================================================================
 run_questions() {
+    # 重置选择，避免"重新配置"时残留旧值
     CREATE_USER=false
     NEW_USERNAME=""
     MIRROR_PROVIDER="official"
     INSTALL_BASE=false
+    DOCKER_MIRROR=false
     INSTALL_LOCALE=false
     INSTALL_FONTS=false
     INSTALL_ZSH=false
@@ -869,9 +1028,11 @@ run_questions() {
     TARGET_USER=""
     TARGET_HOME=""
     WSL_PENDING_DEFAULT_USER=""
+    WSL_DEFAULT_USER=false
     ask_create_user
     ask_mirror
     ask_base_software
+    ask_docker_mirror
     ask_locale
     ask_zsh
     ask_fonts
@@ -884,6 +1045,7 @@ run_execution() {
     $CREATE_USER    && exec_create_user
     exec_mirror
     $INSTALL_BASE   && exec_base_software
+    exec_docker_mirror
     $INSTALL_LOCALE && exec_locale
     $INSTALL_ZSH    && exec_zsh
     $INSTALL_FONTS  && exec_fonts
@@ -897,21 +1059,15 @@ run_execution() {
     echo "目标用户: $TARGET_USER"
     echo "家目录  : $TARGET_HOME"
     if $CREATE_USER; then
-        echo ""
         echo "请使用: su - $TARGET_USER   切换到新用户"
     elif [[ "$TARGET_USER" == "root" ]]; then
-        echo ""
         echo "本次未创建普通用户，用户级配置已写入 root (/root)"
     fi
-    if $INSTALL_NEOVIM; then
-        echo "首次启动 nvim 会自动下载 LazyVim 插件，请保持网络畅通"
-    fi
-    if is_wsl && [[ -n "$WSL_PENDING_DEFAULT_USER" || "$WSL_SYSTEMD" == true ]]; then
-        echo "WSL 配置已写入 /etc/wsl.conf，请在 Windows 执行 wsl --shutdown 后重开"
-        echo "回到 root:  wsl -u root"
-    fi
+    print_postaction_summary
     echo ""
-    echo "建议重启终端或执行 'exec zsh' 以加载新配置"
+    if $INSTALL_ZSH; then
+        echo "建议重启终端或执行 'exec zsh' 以加载新配置"
+    fi
 }
 
 main() {
@@ -924,7 +1080,7 @@ main() {
 
     heading "Arch Linux 初始化配置脚本"
     echo "支持原生 Arch / WSL Arch，所有配置均针对最终目标用户"
-    echo "提示: 询问步骤直接回车视为允许 (y)"
+    echo "提示: 询问步骤直接回车视为是 (Y)"
     echo ""
 
     while true; do
