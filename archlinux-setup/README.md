@@ -24,33 +24,66 @@
 
 ## 使用方法
 
-> 脚本需以 **root** 用户执行。
+单文件自举：脚本开头内嵌了一段 shell 引导层（stage 0），**全新系统上什么都不用先装**，直接跑即可。
 
 ```bash
-# 下载后赋予执行权限
+sh arch-setup.py
+```
+
+非 root 会自动用 `sudo` 重新执行。也可以加执行权限后直接运行：
+
+```bash
 chmod +x arch-setup.py
-
-# 以 root 执行（推荐）
 sudo ./arch-setup.py
-# 或
-su -c './arch-setup.py'
 ```
 
-在 WSL Arch 中：
+### 裸机上怎么先拿到这个脚本
+
+Arch 的 `base` 元包**不含** curl / wget / git / python。pacman 内部用的是 libcurl，所以可以用它先把 curl 装出来：
 
 ```bash
-sudo ./arch-setup.py
+pacman -Sy --noconfirm curl
+curl -fsSLO <本仓库 raw 地址>/arch-setup.py
+sh arch-setup.py
 ```
+
+> **不支持 `curl ... | sh`**：引导层需要按路径重新执行自身，管道方式下 `$0` 不是文件，必定失败。脚本会检测到并明确报错。
+
+在 WSL Arch 中用法相同：
+
+```bash
+sudo sh arch-setup.py
+```
+
+### stage 0 引导层做了什么
+
+按依赖顺序处理"全新系统上什么都没配置"的情况，全部在 Python 主体启动之前完成：
+
+| 步骤 | 处理的问题 |
+|------|-----------|
+| CRLF 自愈 | 在 Windows 上编辑过的脚本换行是 CRLF，会让 sh 报出无法理解的语法错误；检测到就去 CR 后重新执行自身 |
+| Arch 检测 | 在任何写文件动作**之前**确认是 Arch，避免在别的发行版上乱写 `/etc/pacman.d/` |
+| root | 非 root 自动 `sudo` 重执行 |
+| TERM | chroot / 串口终端下 `TERM` 为空会让 curses 菜单直接抛异常 |
+| **快速路径** | 已有 python3 时立刻进主体：**不联网、不改任何文件** |
+| 系统时钟 | 时钟偏差会表现为 TLS「证书未生效」和 GPG「签名来自未来」，尝试 `hwclock -s` 校正 |
+| 镜像源 | `mirrorlist` 无可用 `Server =` 时写入一份多源默认值 |
+| pacman keyring | 全新 rootfs 的 keyring 为空，**必须在装任何包之前** `pacman-key --init/--populate` |
+| 同步 + 升级 | `pacman -Sy` 失败时给出联网排查指引；再更新 `archlinux-keyring` 并整体 `-Su`，避免 `-Sy` 后直接 `-S` 的部分升级 |
+| 安装 python | 失败时给出签名问题的手动修复命令 |
+
+> 走快速路径时 stage 0 不做 keyring 初始化，这部分由 Python 侧的镜像源步骤兜底（该步骤无条件执行）。
 
 ## 执行流程
 
-1. **前置校验**：root 检测、`/etc/arch-release` 检测、WSL 检测
-2. **菜单选择**（menuconfig 风格，分组菜单，选择即时生效，菜单即确认）：
+1. **stage 0 引导层**（sh）：CRLF 自愈、Arch 检测、root、TERM、时钟、镜像源、keyring、安装 python（详见上方"使用方法"）
+2. **前置校验**（Python）：root 检测、`/etc/arch-release` 检测、WSL 检测
+3. **菜单选择**（menuconfig 风格，分组菜单，选择即时生效，菜单即确认）：
    - **目标用户**：`空格` 或 `回车` 进入子菜单，选择 *创建新用户* 或 *配置已有用户*
    - **镜像源**：`空格` 或 `回车` 进入单选子菜单（官方 / 清华 / 中科大 / 阿里 / 腾讯 / 华为 / **自动优选(reflector)**）
    - 其余各项按分组 `空格` 勾选（见下方分组清单）；勾选 **Docker** 后自动展开 **Docker 镜像源** 子选项
    - 底部提示栏：动态操作提示（如"空格/回车: 进入选择"）与固定图例同行显示
-3. **执行阶段**：回车 `[执行]` 触发，按菜单顺序依次执行所选各项
+4. **执行阶段**：回车 `[执行]` 触发，按菜单顺序依次执行所选各项
 
 ## 软件清单（分组）
 
@@ -213,9 +246,8 @@ sudo ./arch-setup.py
 ## 目录结构
 
 ```
-arch-init/
-  arch-setup.py  # 主脚本 (Python 3 + curses)
-  init.bat       # 旧版 bash 脚本，仅作参考，不再执行
+archlinux-setup/
+  arch-setup.py  # 主脚本，单文件（sh 引导层 + Python 3 curses 主体）
   README.md      # 本文档
 ```
 

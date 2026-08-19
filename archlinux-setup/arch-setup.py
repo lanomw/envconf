@@ -1,5 +1,111 @@
-#!/usr/bin/env python3
+#!/bin/sh
 # -*- coding: utf-8 -*-
+''':' #
+# ===========================================================================
+# stage 0: shell 引导层（单文件自举）
+#   全新 Arch 上可能没有 python3 / 镜像源 / pacman keyring，这里按依赖顺序
+#   把它们准备好，再把控制权交给下面的 Python 主体。
+#
+#   开头三行对 CRLF 换行免疫（行尾的 # 会吃掉 \r）：一旦在 stage 0 区域内检测
+#   到 CR，就把自身去 CR 后重新执行。否则在 Windows 上编辑过的脚本会报出一堆
+#   无法理解的 sh 语法错误（fi\r、heredoc 终止符失配）。
+#   只扫前 200 行：Python 主体是 CRLF 无所谓（Python 走 universal newlines），
+#   没必要为此多做一次重执行。若 stage 0 长过 200 行，记得同步调大。
+# ===========================================================================
+[ -r "$0" ] || { echo "错误: 不支持管道执行(curl ... | sh)，请先下载再运行: sh arch-setup.py" >&2; exit 1; } #
+CR=$(printf '\r') #
+[ -z "$(head -n 200 "$0" 2>/dev/null | tr -dc "$CR" | head -c 1)" ] || { _s=${TMPDIR:-/tmp}/arch-setup.$$.py; tr -d "$CR" < "$0" > "$_s" && exec sh "$_s" "$@"; } #
+
+# --- 1. 必须是 Arch：放在任何写文件动作之前 --------------------------------
+if [ ! -e /etc/arch-release ] && ! command -v pacman >/dev/null 2>&1; then
+    echo "错误: 未检测到 Arch Linux（既无 /etc/arch-release 也无 pacman）" >&2
+    exit 1
+fi
+
+# --- 2. 必须是 root --------------------------------------------------------
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo sh "$0" "$@"
+    fi
+    echo "错误: 请以 root 运行本脚本" >&2
+    exit 1
+fi
+
+# --- 3. curses 需要 TERM，chroot / 串口终端下可能为空 ----------------------
+[ -n "$TERM" ] || TERM=linux
+export TERM
+
+# --- 4. 快速路径：python3 已就绪时直接进主体，不联网、不改任何文件 --------
+if command -v python3 >/dev/null 2>&1; then
+    exec python3 "$0" "$@"
+fi
+
+echo "未检测到 python3，开始引导（时钟 / 镜像源 / keyring / 安装 python）…"
+
+# --- 5. 时钟：偏差会表现为 TLS 证书未生效、GPG 签名来自未来 ----------------
+_year=$(date -u +%Y 2>/dev/null)
+case $_year in ''|*[!0-9]*) _year=0 ;; esac
+if [ "$_year" -lt 2024 ]; then
+    echo "系统时钟异常（当前年份 $_year），尝试从硬件时钟校正…"
+    hwclock -s >/dev/null 2>&1
+    _year=$(date -u +%Y 2>/dev/null)
+    case $_year in ''|*[!0-9]*) _year=0 ;; esac
+    if [ "$_year" -lt 2024 ]; then
+        echo "警告: 时钟仍不正确，包签名校验可能失败" >&2
+        echo "      请手动执行: date -s 'YYYY-MM-DD HH:MM:SS'" >&2
+    fi
+fi
+
+# --- 6. 镜像源列表为空时写入一份多源默认值（全新系统可能未配置）-----------
+if ! grep -qE '^[[:space:]]*Server[[:space:]]*=' /etc/pacman.d/mirrorlist 2>/dev/null; then
+    echo "镜像源列表为空，写入默认镜像…"
+    mkdir -p /etc/pacman.d
+    cat > /etc/pacman.d/mirrorlist <<'MIRRORLIST'
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://mirrors.tuna.tsinghua.edu.cn/archlinux/$repo/os/$arch
+Server = https://mirrors.ustc.edu.cn/archlinux/$repo/os/$arch
+Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
+MIRRORLIST
+fi
+
+# --- 7. keyring：全新 rootfs 的 keyring 为空，装任何包之前必须先初始化 -----
+if [ ! -s /etc/pacman.d/gnupg/pubring.gpg ]; then
+    echo "初始化 pacman keyring…"
+    pacman-key --init >/dev/null 2>&1
+    pacman-key --populate archlinux >/dev/null 2>&1
+fi
+
+# --- 8. 同步软件源；失败时给出可直接照做的排查指引 -------------------------
+echo "同步软件源…"
+if ! pacman -Sy --noconfirm; then
+    echo "错误: 软件源同步失败" >&2
+    echo "  常见原因: 无网络 / DNS 不可用 / 镜像源不可达" >&2
+    echo "  排查:  ip link   |   ping -c1 223.5.5.5   |   cat /etc/resolv.conf" >&2
+    echo "  联网:  dhcpcd <网卡>   |   无线: iwctl   |   systemctl start NetworkManager" >&2
+    exit 1
+fi
+
+# keyring 包过期会让后续所有签名校验失败，先单独更新它
+pacman -S --noconfirm --needed archlinux-keyring >/dev/null 2>&1
+
+# 整体升级：避免 -Sy 之后直接 -S 的部分升级（新 python 可能链接更新的 glibc，
+# 装完直接跑不起来，而那时脚本已经没有可用的 python 自救了）
+pacman -Su --noconfirm || echo "警告: 系统升级未完全成功，仍继续尝试安装 python" >&2
+
+# --- 9. 安装 python 并交棒给 Python 主体 -----------------------------------
+echo "安装 python…"
+if ! pacman -S --noconfirm python; then
+    echo "错误: 安装 python 失败" >&2
+    echo "  若报签名相关错误，手动执行:" >&2
+    echo "    pacman-key --init && pacman-key --populate archlinux" >&2
+    echo "    pacman -Sy --noconfirm archlinux-keyring" >&2
+    echo "  然后重跑: sh $0" >&2
+    exit 1
+fi
+
+exec python3 "$0" "$@"
+':'''
 """
 Arch Linux 初始化配置脚本 (Python 3 + curses)
 支持: 原生 Arch / WSL Arch
@@ -8,8 +114,17 @@ Arch Linux 初始化配置脚本 (Python 3 + curses)
 菜单 (menuconfig 风格):
   ↑/↓   移动
   空格  勾选 / 取消 (已存在的项会被锁定, 空格无效)
-  回车  进入子菜单 (目标用户 / 镜像源) 或 执行 / 退出
+  空格  进入子菜单 (目标用户 / 镜像源) 或 执行 / 退出
   q    退出
+
+全新系统单文件自举: 直接 `sh arch-setup.py`
+  脚本开头内嵌 shell 引导层 (stage 0)，按依赖顺序确保 Arch 检测 / root / TERM /
+  系统时钟 / 镜像源 / pacman keyring / 软件源同步 / python 就绪后再进入本主体。
+  已装 python3 时走快速路径: 直接进菜单，不联网、不改任何文件。
+
+裸机上怎么拿到本脚本 (Arch base 元包不含 curl/wget/git/python):
+  pacman -Sy --noconfirm curl && curl -fsSLO <raw-url> && sh arch-setup.py
+  注意: 不支持 `curl ... | sh`——引导层需要按路径重新执行自身。
 """
 
 import os
@@ -508,7 +623,7 @@ def run_create_user(st, now, reboot, failures):
             raise SystemExit("useradd %s 失败，脚本中止" % u)
         while True:
             pw1 = getpass.getpass("请为新用户 %s 设置密码: " % u)
-            pw2 = getpass.getpass("再次输入密码: " % u)
+            pw2 = getpass.getpass("再次输入密码: ")
             if pw1 and pw1 == pw2:
                 break
             err("两次输入不一致或为空，请重试")
@@ -980,13 +1095,13 @@ def read_key(win):
 
 
 def radio_select(win, title, options, current):
-    """单选子菜单；回车返回选中索引，esc/q 返回 None。"""
+    """单选子菜单；空格返回选中索引，esc/q 返回 None。"""
     n = len(options)
     cur = max(0, min(n - 1, current)) if n else 0
     while True:
         win.clear()
         try:
-            win.addstr(0, 0, "==== %s （方向键 + 回车，esc/q 返回） ====" % title,
+            win.addstr(0, 0, "==== %s （方向键 + 空格确认，esc/q 返回） ====" % title,
                        curses.color_pair(3))
         except curses.error:
             pass
@@ -1008,7 +1123,7 @@ def radio_select(win, title, options, current):
             cur = max(0, cur - 1)
         elif k == "down":
             cur = min(n - 1, cur + 1)
-        elif k == "enter":
+        elif k == "space":
             return cur
         elif k in ("esc", "q"):
             return None
@@ -1138,12 +1253,12 @@ def render_main(win, rows, cur, st):
     if rows:
         text, kind, key, locked, indent = rows[cur]
         if kind in ("submenu_user", "submenu_mirror"):
-            hint = "空格/回车: 进入选择"
+            hint = "空格: 进入选择"
         elif kind == "toggle":
             hint = "空格: 勾选/取消" if not locked else "已配置，空格无效"
         elif kind == "action":
-            hint = "回车: 执行/退出"
-    line = "↑↓移动 · 空格勾选/进入 · 回车进入/执行 · q退出"
+            hint = "空格: 执行/退出"
+    line = "↑↓移动 · 空格勾选/进入/执行 · q退出"
     if hint:
         line += "   |   " + hint
     try:
@@ -1242,16 +1357,6 @@ def main_menu(win, st):
                 rows = build_rows(st)
                 n = len(rows)
             elif kind == "submenu_user":
-                user_menu(win, st)
-                rows = build_rows(st)
-                n = len(rows)
-            elif kind == "submenu_mirror":
-                mirror_menu(win, st)
-                rows = build_rows(st)
-                n = len(rows)
-        elif k == "enter":
-            text, kind, key, locked, indent = rows[cur]
-            if kind == "submenu_user":
                 user_menu(win, st)
                 rows = build_rows(st)
                 n = len(rows)
