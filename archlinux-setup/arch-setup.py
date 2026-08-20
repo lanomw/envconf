@@ -2,6 +2,11 @@
 # -*- coding: utf-8 -*-
 ''':' #
 # ===========================================================================
+# wsl安装arch系统到指定路径
+#   下载系统: https://fastly.mirror.pkgbuild.com/wsl/latest
+#   安装到指定位置:: wsl --install --from-file C:\Users\atk\Downloads\archlinux-2026.08.01.174141.wsl --location E:\WSL\ArchLinux
+#   注销系统: wsl --unregister archlinux
+#
 # stage 0: shell 引导层（单文件自举）
 #   全新 Arch 上可能没有 python3 / 镜像源 / pacman keyring，这里按依赖顺序
 #   把它们准备好，再把控制权交给下面的 Python 主体。
