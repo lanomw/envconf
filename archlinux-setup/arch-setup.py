@@ -138,7 +138,7 @@ import getpass
 import shutil
 import subprocess
 import curses
-import textwrap
+import unicodedata
 
 # ---------------------------------------------------------------------------
 #  工具函数
@@ -455,6 +455,90 @@ PACKAGE_ITEMS = {
                  ("podman", "kubectl", "k9s", "helm"), None),
 }
 
+# 非装包项的说明: key -> 这一项到底改了什么（菜单详情栏用）
+ACTION_DETAIL = {
+    "user":          "选择配置目标: 创建新用户 / 指定已有用户 / root",
+    "mirror":        "改写 /etc/pacman.d/mirrorlist（所选源排第一，其余回退）",
+    "locale":        "启用 en_US.UTF-8 + zh_CN.UTF-8，写入 /etc/locale.conf",
+    "timezone":      "交互输入时区（默认 Asia/Shanghai），符号链接 /etc/localtime",
+    "docker_mirror": "写入 /etc/docker/daemon.json 的 registry-mirrors 多源回退",
+    "wsl_systemd":   "在 /etc/wsl.conf 写入 [boot] systemd=true",
+    "wsl_default":   "在 /etc/wsl.conf 写入 [user] default=<新用户>",
+}
+
+
+def item_detail(key, st):
+    """菜单详情栏：这一项到底会装哪些包 / 改哪些文件。"""
+    if key in ACTION_DETAIL:
+        return ACTION_DETAIL[key]
+    if key in PACKAGE_ITEMS:
+        _, pkgs, unit = PACKAGE_ITEMS[key]
+        s = "安装: " + " ".join(pkgs)
+        if unit:
+            s += "  ·  启用服务: " + unit
+        return s
+    if key == "base":
+        pkgs = list(BASE_PKGS)
+        if st["zsh"]:
+            pkgs += ["zsh", "zsh-completions"]
+        return "安装: " + " ".join(pkgs)
+    if key == "fonts":
+        return "安装: " + " ".join(FONT_PKGS)
+    if key == "microcode":
+        return "安装: intel-ucode 或 amd-ucode（按 /proc/cpuinfo 自动识别，WSL 跳过）"
+    if key == "zsh":
+        return ("安装: zsh zsh-completions  ·  克隆插件: "
+                + " ".join(n for _, n in ZSH_PLUGINS)
+                + "  ·  写入 ~/.zshrc 并 chsh")
+    if key == "nvim":
+        return ("安装: " + " ".join(NVIM_DEPS)
+                + "  ·  克隆 LazyVim/starter 到 ~/.config/nvim（旧配置先备份）")
+    if key == "docker":
+        return "安装: docker docker-compose docker-buildx  ·  启用服务: docker  ·  目标用户加入 docker 组"
+    if key == "aur":
+        return "安装: yay（来自 archlinuxcn 仓库）"
+    return ""
+
+
+def disp_width(s):
+    """终端显示宽度：CJK 全角字符按 2 列计。"""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+
+
+def trunc_disp(s, limit):
+    """按显示列宽截断。"""
+    out, w = [], 0
+    for c in s:
+        cw = 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1
+        if w + cw > limit:
+            break
+        out.append(c)
+        w += cw
+    return "".join(out)
+
+
+def wrap_disp(s, limit, max_lines):
+    """按显示列宽折行，不拆开空格分隔的词；超出 max_lines 则末行加省略号。"""
+    if limit < 4 or max_lines < 1:
+        return []
+    lines, cur = [], ""
+    for token in re.findall(r"\S+\s*", s):
+        if cur and disp_width(cur + token) > limit:
+            lines.append(cur.rstrip())
+            cur = ""
+        cur += token
+        while disp_width(cur) > limit:          # 单个词就超长，硬切
+            head = trunc_disp(cur, limit)
+            lines.append(head)
+            cur = cur[len(head):]
+    if cur.strip():
+        lines.append(cur.rstrip())
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = trunc_disp(lines[-1], limit - 1) + "…"
+    return lines
+
+
 ZSH_PLUGINS = [
     ("https://github.com/zsh-users/zsh-autosuggestions", "zsh-autosuggestions"),
     ("https://github.com/zsh-users/zsh-syntax-highlighting", "zsh-syntax-highlighting"),
@@ -553,9 +637,27 @@ def detect(st, now):
     if is_wsl():
         lock("wsl_systemd", wsl_systemd_present())
 
+    # ---- 当前环境明确不支持的项：禁用并强制取消勾选，避免无效选择 ----
+    st["disabled"] = {}
+
+    def disable(key, reason):
+        # 已安装/已配置的按"已配置"显示即可，不必再提不支持
+        if st["locked"].get(key):
+            return
+        st["disabled"][key] = reason
+        st[key] = False
+
+    if is_wsl():
+        disable("microcode", "WSL 不适用，微码由 Windows 宿主管理")
+    elif microcode_pkg() is None:
+        disable("microcode", "无法从 /proc/cpuinfo 识别 CPU 厂商")
+
     # reflector best-effort：mirrorlist 已是 reflector 生成则默认选中
     if reflector_present():
         st["mirror"] = "reflector"
+    # WSL 下 reflector 不执行，若已选中则退回官方源
+    if is_wsl() and st["mirror"] == "reflector":
+        st["mirror"] = "official"
 
 
 def locale_present():
@@ -785,27 +887,34 @@ def run_ufw(st, now, reboot, failures):
     ok("ufw 已启用并放行 OpenSSH")
 
 
+def microcode_pkg():
+    """按 /proc/cpuinfo 得出应装的微码包；无法识别厂商返回 None。"""
+    try:
+        with open("/proc/cpuinfo") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if re.search(r"\bGenuineIntel\b", data):
+        return "intel-ucode"
+    if re.search(r"\bAuthenticAMD\b", data):
+        return "amd-ucode"
+    return None
+
+
 def run_microcode(st, now, reboot, failures):
-    """CPU 微码：原生 Arch 依据 /proc/cpuinfo 安装 intel-ucode 或 amd-ucode；WSL 跳过。"""
+    """CPU 微码：依据 /proc/cpuinfo 安装 intel-ucode 或 amd-ucode。
+
+    WSL 与厂商无法识别两种情况已在菜单侧禁用，这里仅作兜底。
+    """
     if is_wsl():
         reboot.append("CPU 微码由 Windows 宿主管理，跳过")
         ok("CPU 微码（WSL：由宿主管理，跳过）")
         return
-    vendor = ""
-    try:
-        with open("/proc/cpuinfo") as f:
-            data = f.read()
-        if re.search(r"\bGenuineIntel\b", data):
-            vendor = "intel"
-        elif re.search(r"\bAuthenticAMD\b", data):
-            vendor = "amd"
-    except OSError:
-        pass
-    if not vendor:
+    pkg = microcode_pkg()
+    if not pkg:
         failures.append("无法识别 CPU 厂商，未安装微码")
         warn("无法识别 CPU 厂商")
         return
-    pkg = "intel-ucode" if vendor == "intel" else "amd-ucode"
     info("安装 CPU 微码: %s" % pkg)
     if not pacman_S(pkg):
         failures.append("%s 安装失败，请手动执行: pacman -S %s" % (pkg, pkg))
@@ -921,32 +1030,21 @@ def run_zsh(st, now, reboot, failures):
     rc = os.path.join(home, ".zshrc")
     if os.path.isfile(rc) and "美化版" in open(rc).read():
         info("已检测到本脚本写入的 .zshrc，跳过覆盖（可安全重跑）")
+        # 修正可能残留的 root 属主：上次若在 write 与 chown 之间被中断，
+        # .zshrc 会以 root 属主留下，且因含标识而永远跳过覆盖。
     else:
         if os.path.exists(rc):
-            shutil.copy2(rc, "%s.bak.%d" % (rc, int(time.time())))
+            bak = "%s.bak.%d" % (rc, int(time.time()))
+            shutil.copy2(rc, bak)
             warn("已备份原 .zshrc")
+            chown_r(bak, t)
         with open(rc, "w") as f:
             f.write(ZSH_CONFIG)
-        chown_r(rc, t)
+    chown_r(rc, t)
 
     if not run_ok(["chsh", "-s", "/bin/zsh", t]):
         warn("%s 切换默认 shell 为 zsh 失败" % t)
         failures.append("%s 切换 zsh 失败，请手动执行: chsh -s /bin/zsh %s" % (t, t))
-
-    if os.geteuid() == 0 and getpass.getuser() != t:
-        if not run_ok(["chsh", "-s", "/bin/zsh", "root"]):
-            warn("root 切换 zsh 失败，su - 后仍为原 shell")
-            failures.append("root 切换 zsh 失败，请手动执行: chsh -s /bin/zsh root")
-        root_rc = "/root/.zshrc"
-        if not os.path.exists(root_rc):
-            with open(root_rc, "w") as f:
-                f.write(ZSH_CONFIG)
-            os.makedirs("/root/.zsh", exist_ok=True)
-            for url, name in ZSH_PLUGINS:
-                src = os.path.join(zsh_dir, name)
-                if os.path.isdir(src):
-                    subprocess.run(["cp", "-r", src, "/root/.zsh/"])
-            ok("已为 root 创建 .zshrc 并复制插件")
 
     now.append("Zsh 已配置：注销重新登录或执行 'exec zsh' 加载；首次进入会触发 p10k 个性化向导")
     ok("Zsh 美化配置完成")
@@ -1004,8 +1102,12 @@ def run_nvim(st, now, reboot, failures):
               os.path.join(home, ".local", "state", "nvim"),
               os.path.join(home, ".cache", "nvim")]:
         if os.path.isdir(d):
-            shutil.move(d, "%s.bak.%d" % (d, ts))
-            warn("已备份不完整目录: %s -> %s.bak.%d" % (d, d, ts))
+            bak = "%s.bak.%d" % (d, ts)
+            shutil.move(d, bak)
+            # shutil.move 跨文件系统会递归 copy2，属主全部变成 root，
+            # 必须显式修正，否则用户家目录残留 root 属主的备份目录。
+            chown_r(bak, t)
+            warn("已备份不完整目录: %s -> %s" % (d, bak))
 
     if bash_as(t, "git clone --depth=1 https://github.com/LazyVim/starter '%s'" % nvim_dir).returncode != 0:
         warn("以 %s 克隆失败，改用当前用户克隆到 %s" % (t, nvim_dir))
@@ -1139,7 +1241,10 @@ def build_rows(st):
         rows.append((text, "header", "", False, 0))
 
     def toggle_row(label, key, indent=0):
-        if st["locked"].get(key):
+        if st["disabled"].get(key):
+            rows.append(("  " * indent + "[-] %s (%s)" % (label, st["disabled"][key]),
+                         "toggle", key, True, indent))
+        elif st["locked"].get(key):
             rows.append(("  " * indent + "[*] %s (已配置)" % label, "toggle", key, True, indent))
         else:
             m = mark_on if st[key] else mark_off
@@ -1221,9 +1326,10 @@ def render_main(win, rows, cur, st):
         win.addstr(2, 0, "========================================", curses.color_pair(3))
     except curses.error:
         pass
-    # 内容区: y=4 .. height-3（底部两行留给图例+提示）
+    # 内容区: y=4 .. height-5（底部留给详情栏两行 + 提示一行）
     content_top = 4
-    vis = max(1, height - 6)
+    DETAIL_LINES = 2 if height >= 12 else 0   # 窗口太矮就不画详情栏，避免压住内容
+    vis = max(1, height - 6 - DETAIL_LINES)
     top = max(0, min(cur - vis // 2, len(rows) - vis))
     y = content_top
     for i in range(top, min(top + vis, len(rows))):
@@ -1248,21 +1354,34 @@ def render_main(win, rows, cur, st):
             except curses.error:
                 pass
         y += 1
-    # 底部操作提示（图例 + 动态提示合并为一行）
+    # 底部详情栏：当前高亮项到底装哪些包 / 改哪些文件
     hint = ""
     if rows:
         text, kind, key, locked, indent = rows[cur]
         if kind in ("submenu_user", "submenu_mirror"):
             hint = "空格: 进入选择"
         elif kind == "toggle":
-            hint = "空格: 勾选/取消" if not locked else "已配置，空格无效"
+            if st["disabled"].get(key):
+                hint = "当前环境不支持，无法选择"
+            elif locked:
+                hint = "已配置，空格无效"
+            else:
+                hint = "空格: 勾选/取消"
         elif kind == "action":
             hint = "空格: 执行/退出"
+        detail = item_detail(key, st)
+        if st["disabled"].get(key):
+            detail = "不支持: %s（跳过，不会执行）" % st["disabled"][key]
+        for j, seg in enumerate(wrap_disp(detail, max(4, width - 1), DETAIL_LINES)):
+            try:
+                win.addstr(height - 1 - DETAIL_LINES + j, 0, seg, curses.color_pair(4))
+            except curses.error:
+                pass
     line = "↑↓移动 · 空格勾选/进入/执行 · q退出"
     if hint:
         line += "   |   " + hint
     try:
-        win.addstr(height - 1, 0, line, curses.color_pair(2))
+        win.addstr(height - 1, 0, trunc_disp(line, max(0, width - 1)), curses.color_pair(2))
     except curses.error:
         pass
     win.refresh()
@@ -1311,11 +1430,16 @@ def user_menu(win, st):
 
 def mirror_menu(win, st):
     keys = ["official", "tuna", "ustc", "aliyun", "tencent", "huawei", "reflector"]
+    title = "选择镜像源"
+    if is_wsl():
+        # reflector 在 WSL 下不执行（run_reflector 直接跳过），不列为候选
+        keys.remove("reflector")
+        title = "选择镜像源（WSL 不支持 reflector，已隐藏）"
     if st["mirror"] in keys:
         cur = keys.index(st["mirror"])
     else:
         cur = 0
-    sel = radio_select(win, "选择镜像源", [MIRROR_LABEL[k] for k in keys], cur)
+    sel = radio_select(win, title, [MIRROR_LABEL[k] for k in keys], cur)
     if sel is not None:
         st["mirror"] = keys[sel]
 
@@ -1328,6 +1452,7 @@ def main_menu(win, st):
         pass
     curses.init_pair(2, curses.COLOR_YELLOW, -1)
     curses.init_pair(3, curses.COLOR_CYAN, -1)
+    curses.init_pair(4, curses.COLOR_GREEN, -1)   # 详情栏
     curses.noecho()
     curses.cbreak()
     win.keypad(True)
@@ -1526,6 +1651,7 @@ def default_state():
         "netadd": False,
         "container": False,
         "locked": {},
+        "disabled": {},
         "target_user": "root",
         "_pending_wsl_default": "",
     }
