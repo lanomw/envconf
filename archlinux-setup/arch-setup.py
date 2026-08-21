@@ -5,7 +5,7 @@
 # wsl安装arch系统到指定路径
 #   下载系统: https://fastly.mirror.pkgbuild.com/wsl/latest
 #   注销系统: wsl --unregister archlinux
-#   安装到指定位置:: wsl --install --from-file C:\Users\atk\Downloads\archlinux-2026.08.01.174141.wsl --location E:\WSL\ArchLinux
+ #   安装到指定位置:: wsl --install --from-file C:\\Users\\atk\\Downloads\\archlinux-2026.08.01.174141.wsl --location E:\\WSL\\ArchLinux
 #   进入系统: wsl -d archlinux -u root
 #
 # 进入系统后执行当前脚本进行环境配置
@@ -429,19 +429,24 @@ PACKAGE_ITEMS = {
     "chrony":   ("NTP 时间同步",                    ("chrony",),              "chronyd"),
     "cronie":   ("定时任务",                        ("cronie",),              "cronie"),
     "ufw":      ("防火墙 (ufw)",                    ("ufw",),                 "ufw"),
-    # ---- 开发工具 ----
-    "python":   ("开发语言 (python)",               ("python",),              None),
+    # ---- 开发工具：编程语言 ----
+    "python":   ("Python",                          ("python",),              None),
     "rustup":   ("Rust (rustup)",                    ("rustup",),              None),
     "go":       ("Go",                              ("go",),                  None),
-    "java":     ("Java (jdk-openjdk)",              ("jdk-openjdk",),         None),
-    "node":     ("Node 系 (bun/deno)",              ("bun", "deno"),          None),
-    "lua":      ("脚本语言 (lua)",                  ("lua",),                 None),
-    "php":      ("脚本语言 (php)",                  ("php",),                 None),
-    "ruby":     ("脚本语言 (ruby)",                 ("ruby",),                None),
-    "cpp":      ("C/C++ 工具链 (clang/valgrind)",   ("clang", "valgrind"),    None),
-    "git":      ("git 增强 (git-delta)",            ("git-delta",),           None),
-    "lazygit":  ("lazygit",                         ("lazygit",),             None),
+    "java":     ("Java (OpenJDK)",                  ("jdk-openjdk",),         None),
+    "node":     ("Node.js 运行时 (bun/deno)",       ("bun", "deno"),          None),
+    "lua":      ("Lua",                             ("lua",),                 None),
+    "php":      ("PHP",                             ("php",),                 None),
+    "ruby":     ("Ruby",                            ("ruby",),                None),
+    # ---- 开发工具：C/C++ ----
+    "clang":    ("C/C++ 编译器 (clang)",            ("clang",),               None),
+    "valgrind": ("Valgrind 调试/分析",              ("valgrind",),            None),
+    # ---- 开发工具：其他 ----
     "paru":     ("AUR 助手 (paru)",                 ("paru",),                None),
+    # ---- Git 工具 ----
+    "git":      ("git diff 高亮 (git-delta)",       ("git-delta",),           None),
+    "lazygit":  ("lazygit (TUI)",                   ("lazygit",),             None),
+    "gitx":     ("git 扩展 (git-lfs/git-open)",     ("git-lfs", "git-open"),  None),
     # ---- CLI 增强 ----
     "cli":      ("终端工具 (tmux/btop/eza/bat/zoxide/fd/ripgrep)",
                  ("tmux", "btop", "eza", "bat", "zoxide", "fd", "ripgrep"), None),
@@ -455,12 +460,26 @@ PACKAGE_ITEMS = {
     "starship": ("终端提示符 (starship)",           ("starship",),            None),
     "man":      ("速查手册 (tldr/cheat)",           ("tldr", "cheat"),        None),
     "nav":      ("目录导航 (broot/direnv)",         ("broot", "direnv"),      None),
-    "gitx":     ("git 扩展 (git-lfs/git-open)",     ("git-lfs", "git-open"),  None),
     "plocate":  ("文件索引 (plocate)",              ("plocate",),             None),
     "netadd":   ("网络补充 (mtr/whois)",            ("mtr", "whois"),         None),
     # ---- 容器 ----
     "container":("Podman/K8s (podman/kubectl/k9s/helm)",
                  ("podman", "kubectl", "k9s", "helm"), None),
+}
+# 可折叠分组: key -> 父级行，进入后批量多选
+GROUPS = {
+    "langs": {
+        "label": "编程语言",
+        "keys": ["python", "rustup", "go", "java", "node", "lua", "php", "ruby"],
+    },
+    "cpp": {
+        "label": "C/C++ 工具",
+        "keys": ["clang", "valgrind"],
+    },
+    "git_tools": {
+        "label": "Git 工具",
+        "keys": ["git", "lazygit", "gitx"],
+    },
 }
 
 # 非装包项的说明: key -> 这一项到底改了什么（菜单详情栏用）
@@ -474,6 +493,41 @@ ACTION_DETAIL = {
     "wsl_default":   "在 /etc/wsl.conf 写入 [user] default=<新用户>",
 }
 
+# 各可选包/服务的中文说明，用于菜单详情栏
+ITEM_HELP = {
+    "network":  "网络管理服务，提供 nmtui / nmcli 等工具",
+    "sshd":     "SSH 远程登录服务端",
+    "chrony":   "NTP 时间同步客户端/服务端（WSL 默认已同步）",
+    "cronie":   "定时任务调度，支持 crontab",
+    "ufw":      "简单防火墙前端（原生 Arch）",
+    "python":   "Python 解释器与标准库",
+    "rustup":   "Rust 工具链安装与管理器",
+    "go":       "Go 语言编译器及标准工具",
+    "java":     "OpenJDK 运行与开发环境",
+    "node":     "Node.js 替代运行时（bun / deno）",
+    "lua":      "Lua 脚本语言解释器",
+    "php":      "PHP 解释器与核心扩展",
+    "ruby":     "Ruby 解释器与 gem",
+    "clang":    "Clang / LLVM C/C++ 编译器",
+    "valgrind": "内存泄漏检测与性能分析工具",
+    "git":      "git-delta：语法高亮的 diff 查看器",
+    "lazygit":  "Git 仓库终端交互界面（TUI）",
+    "gitx":     "git-lfs 大文件管理 / git-open 打开仓库网页",
+    "paru":     "AUR 助手（archlinuxcn）",
+    "cli":      "现代化终端工具集（tmux / btop / eza / bat / zoxide / fd / ripgrep）",
+    "editor":   "终端文本编辑器（helix / micro）",
+    "file":     "Yazi 终端文件管理器",
+    "sysinfo":  "系统信息、磁盘与目录分析（fastfetch / duf / ncdu）",
+    "json":     "命令行 JSON / YAML 处理工具（jq / yq）",
+    "netdiag":  "网络诊断与远程工具（nmap / ncat / mosh / httpie / iperf3）",
+    "starship": "跨 Shell 自定义提示符（若启用 Zsh 会自动初始化）",
+    "man":      "命令行速查手册（tldr / cheat）",
+    "nav":      "目录快速浏览与环境切换（broot / direnv）",
+    "plocate":  "文件索引与快速定位（mlocate 替代品）",
+    "netadd":   "网络补充工具（mtr / whois）",
+    "container":"容器与 Kubernetes 工具链（podman / kubectl / k9s / helm）",
+}
+
 
 def item_detail(key, st):
     """菜单详情栏：这一项到底会装哪些包 / 改哪些文件。"""
@@ -481,9 +535,12 @@ def item_detail(key, st):
         return ACTION_DETAIL[key]
     if key in PACKAGE_ITEMS:
         _, pkgs, unit = PACKAGE_ITEMS[key]
+        desc = ITEM_HELP.get(key)
         s = "安装: " + " ".join(pkgs)
         if unit:
             s += "  ·  启用服务: " + unit
+        if desc:
+            return desc + "  ·  " + s
         return s
     if key == "base":
         pkgs = list(BASE_PKGS)
@@ -505,6 +562,13 @@ def item_detail(key, st):
         return "安装: docker docker-compose docker-buildx  ·  启用服务: docker  ·  目标用户加入 docker 组"
     if key == "aur":
         return "安装: yay（来自 archlinuxcn 仓库）"
+    if key in GROUPS:
+        grp = GROUPS[key]
+        parts = []
+        for k in grp["keys"]:
+            _, pkgs, _ = PACKAGE_ITEMS[k]
+            parts.append("%s: %s" % (PACKAGE_ITEMS[k][0], " ".join(pkgs)))
+        return grp["label"] + " — " + "  ·  ".join(parts)
     return ""
 
 
@@ -657,6 +721,7 @@ def detect(st, now):
 
     if is_wsl():
         disable("microcode", "WSL 不适用，微码由 Windows 宿主管理")
+        disable("chrony", "WSL 默认同步 Windows 宿主时间")
     elif microcode_pkg() is None:
         disable("microcode", "无法从 /proc/cpuinfo 识别 CPU 厂商")
 
@@ -1209,7 +1274,7 @@ def radio_select(win, title, options, current):
     n = len(options)
     cur = max(0, min(n - 1, current)) if n else 0
     while True:
-        win.clear()
+        win.erase()
         try:
             win.addstr(0, 0, "==== %s （方向键 + 空格确认，esc/q 返回） ====" % title,
                        curses.color_pair(3))
@@ -1239,14 +1304,88 @@ def radio_select(win, title, options, current):
             return None
 
 
+
+def multi_select(win, title, keys, st):
+    """批量多选子菜单：空格切换选中，回车/esc/q 返回；已锁定/已禁用项仍可见但不可改。"""
+    curses.noecho()
+    curses.cbreak()
+    win.keypad(True)
+    curses.curs_set(0)
+    items = []
+    for k in keys:
+        label = PACKAGE_ITEMS[k][0]
+        locked = st["locked"].get(k)
+        disabled = st["disabled"].get(k)
+        items.append((k, label, locked, disabled))
+    cur = 0
+    n = len(items)
+    while True:
+        win.erase()
+        try:
+            win.addstr(0, 0, "==== %s （方向键 + 空格切换，回车/esc/q 返回） ====" % title,
+                       curses.color_pair(3))
+        except curses.error:
+            pass
+        for i, (k, label, locked, disabled) in enumerate(items):
+            y = 2 + i
+            if disabled:
+                mark, suffix = "[-]", " （%s）" % st["disabled"][k]
+                attr = curses.A_DIM
+            elif locked:
+                mark, suffix = "[*]", " (已配置)"
+                attr = curses.A_DIM
+            elif st[k]:
+                mark, suffix = "[*]", ""
+                attr = curses.A_NORMAL
+            else:
+                mark, suffix = "[ ]", ""
+                attr = curses.A_NORMAL
+            line = "  %s %s%s" % (mark, label, suffix)
+            try:
+                if i == cur:
+                    win.addstr(y, 0, "> %s" % line[2:], curses.A_REVERSE | attr | curses.color_pair(3))
+                else:
+                    win.addstr(y, 0, line, attr)
+            except curses.error:
+                pass
+        win.refresh()
+        k = read_key(win)
+        if k == "up":
+            cur = max(0, cur - 1)
+        elif k == "down":
+            cur = min(n - 1, cur + 1)
+        elif k == "space":
+            mykey, _, locked, disabled = items[cur]
+            if not (locked or disabled):
+                st[mykey] = not st[mykey]
+        elif k in ("enter", "esc", "q"):
+            break
+
 def build_rows(st):
-    """构建主菜单行列表: [(text, kind, key, locked, indent)]；header 为分组标题不可选中"""
+    """构建主菜单行列表: [(text, kind, key, locked, indent)]; header/group 不可直接勾选"""
     rows = []
     mark_on = "[*]"
     mark_off = "[ ]"
 
     def header(text):
         rows.append((text, "header", "", False, 0))
+
+    def group_summary(gkey):
+        grp = GROUPS[gkey]
+        total = len(grp["keys"])
+        selected = [k for k in grp["keys"] if st.get(k)]
+        names = []
+        for k in selected[:3]:
+            short = PACKAGE_ITEMS[k][0].split()[0]
+            names.append(short)
+        if len(selected) > 3:
+            names.append("…")
+        if not selected:
+            detail = "未选"
+        else:
+            joined = ", ".join(names)
+            detail = ("已选 %d/%d: %s" % (len(selected), total, joined))
+        return "%s (%s) ▶" % (grp["label"], detail)
 
     def toggle_row(label, key, indent=0):
         if st["disabled"].get(key):
@@ -1293,15 +1432,19 @@ def build_rows(st):
     # ---- 开发工具 ----
     header("开发工具")
     toggle_row("NeoVim (LazyVim)", "nvim")
-    for key in ("python", "rustup", "go", "java", "node", "lua", "php", "ruby",
-                "cpp", "git", "lazygit", "paru"):
-        toggle_row(PACKAGE_ITEMS[key][0], key)
+    rows.append((group_summary("langs"), "group", "langs", False, 0))
+    rows.append((group_summary("cpp"), "group", "cpp", False, 0))
+    rows.append((group_summary("git_tools"), "group", "git_tools", False, 0))
+
+    # ---- AUR ----
+    header("AUR")
     toggle_row("AUR 助手 (yay)", "aur")
+    toggle_row(PACKAGE_ITEMS["paru"][0], "paru")
 
     # ---- CLI 增强 ----
     header("CLI 增强")
     for key in ("cli", "editor", "file", "sysinfo", "json", "netdiag",
-                "man", "nav", "gitx", "plocate", "netadd"):
+                "man", "nav", "plocate", "netadd"):
         toggle_row(PACKAGE_ITEMS[key][0], key)
 
     # ---- 容器 ----
@@ -1321,9 +1464,8 @@ def build_rows(st):
     rows.append(("  [ 退出 ]", "action", "quit", False, 0))
     return rows
 
-
 def render_main(win, rows, cur, st):
-    win.clear()
+    win.erase()
     try:
         height, width = win.getmaxyx()
     except curses.error:
@@ -1368,6 +1510,8 @@ def render_main(win, rows, cur, st):
         text, kind, key, locked, indent = rows[cur]
         if kind in ("submenu_user", "submenu_mirror"):
             hint = "空格: 进入选择"
+        elif kind == "group":
+            hint = "空格: 批量选择"
         elif kind == "toggle":
             if st["disabled"].get(key):
                 hint = "当前环境不支持，无法选择"
@@ -1405,7 +1549,7 @@ def user_menu(win, st):
         # 创建新用户
         st["create_user"] = True
         st["config_user"] = "root"
-        win.clear()
+        win.erase()
         win.refresh()
         win.addstr(0, 0, "请输入新用户名: ")
         curses.echo()
@@ -1497,6 +1641,11 @@ def main_menu(win, st):
                 mirror_menu(win, st)
                 rows = build_rows(st)
                 n = len(rows)
+            elif kind == "group":
+                grp = GROUPS[key]
+                multi_select(win, grp["label"], grp["keys"], st)
+                rows = build_rows(st)
+                n = len(rows)
             elif kind == "action":
                 if key == "run":
                     if st["create_user"] and not st["new_username"]:
@@ -1557,14 +1706,21 @@ def execute(st):
         if st["nvim"]:
             run_nvim(st, now, reboot, failures)
         for key in ("python", "rustup", "go", "java", "node", "lua", "php", "ruby",
-                    "cpp", "git", "lazygit", "paru"):
+                    "clang", "valgrind"):
             if st[key]:
                 run_pkgs(st, key, now, reboot, failures)
+        # Git 工具
+        for key in ("git", "lazygit", "gitx"):
+            if st[key]:
+                run_pkgs(st, key, now, reboot, failures)
+        # AUR
         if st["aur"]:
             run_aur(st, now, reboot, failures)
+        if st["paru"]:
+            run_pkgs(st, "paru", now, reboot, failures)
         # CLI 增强
         for key in ("cli", "editor", "file", "sysinfo", "json", "netdiag",
-                    "man", "nav", "gitx", "plocate", "netadd"):
+                    "man", "nav", "plocate", "netadd"):
             if st[key]:
                 run_pkgs(st, key, now, reboot, failures)
         # 容器
@@ -1642,9 +1798,11 @@ def default_state():
         "lua": False,
         "php": False,
         "ruby": False,
-        "cpp": False,
+        "clang": False,
+        "valgrind": False,
         "git": False,
         "lazygit": False,
+        "gitx": False,
         "cli": False,
         "editor": False,
         "file": False,
@@ -1653,9 +1811,8 @@ def default_state():
         "netdiag": False,
         "starship": False,
         "man": False,
-        "nav": False,
-        "gitx": False,
-        "plocate": False,
+         "nav": False,
+         "plocate": False,
         "netadd": False,
         "container": False,
         "locked": {},

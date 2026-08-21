@@ -4,10 +4,10 @@
 
 ## 特性
 
-- 菜单化交互（menuconfig 风格，单列表+分组标题）：`↑↓` 移动 / `空格` 勾选或进入子菜单 / `回车` 进入子项或执行 / `q` 退出，列表过长自动滚动
+ - 菜单化交互（menuconfig 风格，单列表+分组标题）：`↑↓` 移动 / `空格` 勾选或进入子菜单 / `回车` 进入子项或执行 / `q` 退出，列表过长自动滚动；方向键移动时改用 `erase()` 刷新，减缓 Windows Terminal 下全屏闪烁
 - **详情栏**：菜单底部实时显示当前高亮项**到底会装哪些包 / 改哪些文件**，不必靠"基础软件包"这样的名字猜内容。按显示列宽折行，中英混排不会错位
 - 菜单即确认：勾选完成后回车 `[执行]` 即可，**无独立确认表**
-- **分组菜单**：`系统基础 / 系统服务 / 终端美化 / 开发工具 / CLI 增强 / 容器 / WSL`，一目了然
+ - **分组菜单 + 批量多选**：`系统基础 / 系统服务 / 终端美化 / 开发工具 / CLI 增强 / 容器 / WSL`；开发工具下“编程语言 / C/C++ 工具 / Git 工具”折叠为父级行，按 `空格` 进入多选子菜单批量勾选，父级实时显示“已选 X/Y”
 - 子项随父项展开：勾选 **Docker** 后自动出现 **Docker 镜像源** 子选项
 - **预检测锁定**：已安装的软件 / 已启用的服务 / 已配置的用户级项自动勾选并锁定，**空格无效不可取消**，避免重复配置
 - **软件清单可扩展**：除基础项外，内置 开发语言/Java/Node/脚本语言/C++/git/lazygit/CLI 工具/容器 等 20+ 可选软件项
@@ -82,7 +82,7 @@ sudo sh arch-setup.py
 3. **菜单选择**（menuconfig 风格，分组菜单，选择即时生效，菜单即确认）：
    - **目标用户**：`空格` 或 `回车` 进入子菜单，选择 *创建新用户* 或 *配置已有用户*
    - **镜像源**：`空格` 或 `回车` 进入单选子菜单（官方 / 清华 / 中科大 / 阿里 / 腾讯 / 华为 / **自动优选(reflector)**）
-   - 其余各项按分组 `空格` 勾选（见下方分组清单）；勾选 **Docker** 后自动展开 **Docker 镜像源** 子选项
+    - 其余各项按分组 `空格` 勾选；带有 `▶` / `>` 的父级行按 `空格` 进入批量多选子菜单（编程语言 / C/C++ 工具 / Git 工具）；勾选 **Docker** 后自动展开 **Docker 镜像源** 子选项
    - 底部详情栏（绿色两行）：当前高亮项会装哪些包、启用哪个服务、改哪个配置文件。例如高亮"基础软件包"时显示 `安装: sudo git base-devel make cmake vim neovim tree curl wget openssh man-db man-pages which less unzip`
    - 底部提示栏：动态操作提示（如"空格/回车: 进入选择"）与固定图例同行显示
 4. **执行阶段**：回车 `[执行]` 触发，按菜单顺序依次执行所选各项
@@ -94,8 +94,8 @@ sudo sh arch-setup.py
 | **系统基础** | 镜像源、Locale、时区、基础软件包、CPU 微码 |
 | **系统服务** | 网络工具(NetworkManager)、SSH 服务端(sshd)、NTP 时间同步(chrony)、定时任务(cronie)、防火墙(ufw) |
 | **终端美化** | Zsh 美化、字体(Nerd/中文)、终端提示符(starship) |
-| **开发工具** | NeoVim(LazyVim)、python、rustup、go、Java(jdk-openjdk)、Node系(bun/deno)、lua、php、ruby、C/C++工具链(clang/valgrind)、git增强(git-delta)、lazygit、AUR助手(yay)、AUR助手(paru) |
-| **CLI 增强** | 终端工具(tmux/btop/eza/bat/zoxide/fd/ripgrep)、终端编辑器(helix/micro)、文件管理(yazi)、系统信息+磁盘(fastfetch/duf/ncdu)、JSON工具(jq/yq)、网络诊断(nmap/ncat/mosh/httpie/iperf3)、速查手册(tldr/cheat)、目录导航(broot/direnv)、git扩展(git-lfs/git-open)、文件索引(plocate)、网络补充(mtr/whois) |
+ | **开发工具** | NeoVim(LazyVim)；**编程语言**（python/rustup/go/Java/Node/lua/php/ruby，批量多选）；**C/C++ 工具**（clang、valgrind，独立可选）；**Git 工具**（git-delta/lazygit/git-lfs/git-open，批量多选）；AUR 助手（yay/paru） |
+ | **CLI 增强** | 终端工具(tmux/btop/eza/bat/zoxide/fd/ripgrep)、终端编辑器(helix/micro)、文件管理(yazi)、系统信息+磁盘(fastfetch/duf/ncdu)、JSON工具(jq/yq)、网络诊断(nmap/ncat/mosh/httpie/iperf3)、速查手册(tldr/cheat)、目录导航(broot/direnv)、文件索引(plocate)、网络补充(mtr/whois) |
 | **容器** | Docker、Docker镜像源(子项)、Podman/K8s(podman/kubectl/k9s/helm) |
 | **WSL** | WSL systemd |
 
@@ -157,16 +157,28 @@ sudo sh arch-setup.py
 - **原生 Arch**：装包后自动 `systemctl enable --now <服务>`（防火墙额外执行 `ufw allow OpenSSH` + `ufw --force enable`）
 - **WSL**：跳过 `systemctl enable`，记入"重启后自动生效"汇总（WSL 下 systemd 不可用时）
 - 服务项默认关闭，勾选才启用；服务已启用则**预检测锁定**
+- **WSL 特殊处理**：`chrony`（NTP）在 WSL 中由 Windows 宿主同步时间，菜单中自动禁用，无需配置
 
 ### 开发工具 / CLI 增强
 
 这些分组为**纯软件包**项，勾选即 `pacman -S --needed` 安装（已装则跳过），失败记入末尾失败汇总，不中断流程。包清单见上方"软件清单"分组表。
 
-### 时区 / CPU 微码 / 终端提示符
+开发工具内进一步分为三类折叠批量多选：
+
+| 分组 | 进入方式 | 说明 |
+|------|---------|------|
+| **编程语言** | 父级行 `空格/回车` | Python / Rust / Go / Java / Node(bun/deno) / Lua / PHP / Ruby，可独立勾选；底部详情栏会说明每个语言的作用 |
+| **C/C++ 工具** | 父级行 `空格/回车` | `clang`（编译器）与 `valgrind`（内存/性能分析）**独立可选**，无强制捆绑 |
+| **Git 工具** | 父级行 `空格/回车` | `git-delta`（diff 高亮）、`lazygit`（TUI）、`git-lfs`/`git-open`（扩展）均为 Git 增强，但不互斥，可按需多选 |
+
+菜单底部详情栏会显示当前高亮项的作用与即将安装的包名，降低"只看分类名不知道用途"的问题。
+
+ ### 时区 / CPU 微码 / Shell 与终端提示符
 
 - **时区**（系统基础组）：交互输入时区（默认 `Asia/Shanghai`），符号链接 `/etc/localtime`；原生 Arch 与 WSL 均生效。`/etc/localtime` 已是符号链接则预检测锁定。
-- **CPU 微码**（系统基础组）：按 `/proc/cpuinfo` 自动识别 Intel→`intel-ucode` / AMD→`amd-ucode` 并安装；WSL 下跳过记入"重启后自动生效"。
-- **终端提示符 starship**（终端美化组）：`starship` 安装后，Zsh 美化生成的 `~/.zshrc` 会自动 `eval "$(starship init zsh)"`（同 `zoxide`）。
+ - **CPU 微码**（系统基础组）：按 `/proc/cpuinfo` 自动识别 Intel→`intel-ucode` / AMD→`amd-ucode` 并安装；WSL 下跳过记入"重启后自动生效"。
+ - **Zsh 美化**（终端美化组）：安装并配置 Zsh + 插件 + 主题；仅作用于目标用户。注意：**Zsh 是 Shell，starship 是提示符**，二者不是互斥的替代关系；启用 Zsh 后仍可选择 starship 作为提示符，脚本生成的 `~/.zshrc` 会自动 `eval "$(starship init zsh)"`。本脚本未使用 zim，而是直接克隆 powerlevel10k 等三个插件。
+ - **终端提示符 starship**（终端美化组）：安装 `starship`；不依赖 Zsh，但搭配 Zsh 使用会自动初始化。
 
 ### 中途失败后再执行
 
