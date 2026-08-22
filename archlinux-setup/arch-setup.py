@@ -5,8 +5,11 @@
 # wsl安装arch系统到指定路径
 #   下载系统: https://fastly.mirror.pkgbuild.com/wsl/latest
 #   注销系统: wsl --unregister archlinux
- #   安装到指定位置:: wsl --install --from-file C:\\Users\\atk\\Downloads\\archlinux-2026.08.01.174141.wsl --location E:\\WSL\\ArchLinux
+#   安装到指定位置: wsl --install --from-file C:/Users/atk/Downloads/archlinux-2026.08.01.174141.wsl --location E:/WSL/ArchLinux
 #   进入系统: wsl -d archlinux -u root
+#
+# 注意: 上方示例路径必须用正斜杠——本文件开头是 Python 三引号字符串，
+# Windows 风格反斜杠路径会形成非法 unicode 转义，导致 python 阶段直接解析失败。
 #
 # 进入系统后执行当前脚本进行环境配置
 #
@@ -121,9 +124,13 @@ Arch Linux 初始化配置脚本 (Python 3 + curses)
 
 菜单 (menuconfig 风格):
   ↑/↓   移动
-  空格  勾选 / 取消 (已存在的项会被锁定, 空格无效)
-  空格  进入子菜单 (目标用户 / 镜像源) 或 执行 / 退出
-  q    退出
+  空格  勾选/取消 单包项；进入子菜单（目标用户 / 镜像源 / 多包组"按包
+        选择" / Docker 镜像源多选）；触发 [执行] / [退出]
+        多包组的整组勾选状态由子选择决定: 全不选即整组取消;
+        未勾选的组进入子菜单时默认全不选
+  回车  同空格
+  a     多选子菜单内全选 / 全不选
+  q     退出
 
 全新系统单文件自举: 直接 `sh arch-setup.py`
   脚本开头内嵌 shell 引导层 (stage 0)，按依赖顺序确保 Arch 检测 / root / TERM /
@@ -138,10 +145,10 @@ Arch Linux 初始化配置脚本 (Python 3 + curses)
 import os
 import re
 import sys
+import json
 import time
 import pwd
 import grp
-import stat
 import getpass
 import shutil
 import subprocess
@@ -307,10 +314,6 @@ def arch_url(m):
     return ARCH_URL[m]
 
 
-def cn_url(m):
-    return CN_URL[m]
-
-
 def write_archlinuxcn_mirrorlist(primary):
     content = write_mirrorlist(primary, cn_url)
     with open("/etc/pacman.d/archlinuxcn-mirrorlist", "w") as f:
@@ -345,7 +348,7 @@ def wsl_conf_set(section, key, value):
         f.write("\n".join(out))
 
 
-def enable_wheel_sudo(now, failures):
+def enable_wheel_sudo(failures):
     sudoers = "/etc/sudoers"
     if os.path.exists(sudoers):
         content = open(sudoers).read()
@@ -373,6 +376,34 @@ def enable_wheel_sudo(now, failures):
     if shutil.which("visudo"):
         if not run_ok(["visudo", "-cf", sudoers]):
             warn("visudo 校验 /etc/sudoers 失败，请手动检查")
+
+
+def ensure_user_sudo(st, failures):
+    """确保目标用户可 sudo：加入 wheel 组 + sudoers 放行。
+
+    必须在 sudo 包装好之后再写 sudoers：全新系统 /etc/sudoers 与
+    /etc/sudoers.d 都不存在（sudo 未安装），enable_wheel_sudo 会
+    整体静默落空，之后装上的 sudo 默认注释 %wheel，用户无法 sudo。
+    对"已有用户"目标同样执行（旧版只在创建新用户分支里做）。
+    """
+    t = st["target_user"]
+    if t == "root":
+        return
+    if not run_ok(["usermod", "-aG", "wheel", t]):
+        failures.append("无法将 %s 加入 wheel 组，请手动执行: usermod -aG wheel %s" % (t, t))
+    if not (os.path.exists("/etc/sudoers") or shutil.which("sudo")):
+        info("检测到 sudo 未安装，先安装 …")
+        if not pacman_S("sudo"):
+            failures.append("sudo 安装失败，%s 暂无法使用 sudo，请手动执行: pacman -S sudo" % t)
+            return
+    os.makedirs("/etc/sudoers.d", exist_ok=True)
+    enable_wheel_sudo(failures)
+    groups = {g.gr_name for g in grp.getgrall() if t in g.gr_mem}
+    groups.add(group_name(t))
+    if "wheel" in groups:
+        ok("%s 已在 wheel 组，重新登录后即可使用 sudo" % t)
+    else:
+        failures.append("%s 不在 wheel 组，sudo 不可用，请检查 usermod 是否成功" % t)
 
 
 # ---------------------------------------------------------------------------
@@ -411,121 +442,160 @@ CN_URL = {
 def cn_url(m):
     return CN_URL.get(m, CN_URL["official"])
 
-BASE_PKGS = ["sudo", "git", "base-devel", "make", "cmake", "vim", "neovim",
+BASE_PKGS = ["sudo", "git", "base-devel", "make", "cmake", "vim",
              "tree", "curl", "wget", "openssh", "man-db", "man-pages",
-             "which", "less", "unzip"]
+             "which", "less", "unzip", "zip", "rsync"]
 
-FONT_PKGS = ["ttf-meslo-nerd", "noto-fonts-cjk", "noto-fonts-emoji"]
+FONT_PKGS = ["ttf-meslo-nerd", "noto-fonts-cjk", "noto-fonts-emoji"]   # 提示符依赖,自动安装
 
-NVIM_DEPS = ["ripgrep", "fd", "unzip", "lazygit", "fzf", "nodejs", "npm",
+NVIM_DEPS = ["neovim", "ripgrep", "fd", "unzip", "lazygit", "fzf", "nodejs", "npm",
              "gcc", "make"]
 
 # 可勾选软件清单: key -> (标签, 包元组, 服务单元或 None)
 #   纯包项  -> run_pkgs；带服务单元 -> run_service（非 WSL 时 systemctl enable --now）
+#   多包组的标签只写类别名：包清单与说明在"按包选择"子菜单里展示（空格进入）
+# 包名均取自官方仓库 (core/extra)；archlinuxcn 独有的包登记在 CN_PKGS，
+# 选中这类包时 run_mirror 会自动启用 archlinuxcn 仓库。
 PACKAGE_ITEMS = {
     # ---- 系统服务 ----
-    "network":  ("网络工具 (NetworkManager)",       ("networkmanager",),      "NetworkManager"),
-    "sshd":     ("SSH 服务端",                      ("openssh",),             "sshd"),
-    "chrony":   ("NTP 时间同步",                    ("chrony",),              "chronyd"),
-    "cronie":   ("定时任务",                        ("cronie",),              "cronie"),
-    "ufw":      ("防火墙 (ufw)",                    ("ufw",),                 "ufw"),
-    # ---- 开发工具：编程语言 ----
-    "python":   ("Python",                          ("python",),              None),
-    "rustup":   ("Rust (rustup)",                    ("rustup",),              None),
-    "go":       ("Go",                              ("go",),                  None),
-    "java":     ("Java (OpenJDK)",                  ("jdk-openjdk",),         None),
-    "node":     ("Node.js 运行时 (bun/deno)",       ("bun", "deno"),          None),
-    "lua":      ("Lua",                             ("lua",),                 None),
-    "php":      ("PHP",                             ("php",),                 None),
-    "ruby":     ("Ruby",                            ("ruby",),                None),
-    # ---- 开发工具：C/C++ ----
-    "clang":    ("C/C++ 编译器 (clang)",            ("clang",),               None),
-    "valgrind": ("Valgrind 调试/分析",              ("valgrind",),            None),
-    # ---- 开发工具：其他 ----
-    "paru":     ("AUR 助手 (paru)",                 ("paru",),                None),
-    # ---- Git 工具 ----
-    "git":      ("git diff 高亮 (git-delta)",       ("git-delta",),           None),
-    "lazygit":  ("lazygit (TUI)",                   ("lazygit",),             None),
-    "gitx":     ("git 扩展 (git-lfs/git-open)",     ("git-lfs", "git-open"),  None),
+    "network":  ("网络工具 (NetworkManager)",  ("networkmanager",),     "NetworkManager"),
+    "sshd":     ("SSH 服务端",                 ("openssh",),            "sshd"),
+    "chrony":   ("NTP 时间同步",               ("chrony",),             "chronyd"),
+    "cronie":   ("定时任务",                   ("cronie",),             "cronie"),
+    "ufw":      ("防火墙 (ufw)",               ("ufw",),                "ufw"),
+    # ---- 系统基础 / 包管理 ----
+    "aur":      ("AUR 助手",                   ("yay", "paru"),         None),
+    # ---- 开发工具（语言在前，工具在后）----
+    "python":   ("Python",                     ("python",),             None),
+    "lua":      ("Lua",                        ("lua",),                None),
+    "php":      ("PHP",                        ("php",),                None),
+    "ruby":     ("Ruby",                       ("ruby",),               None),
+    "java":     ("Java (jdk-openjdk)",         ("jdk-openjdk",),        None),
+    "node":     ("Node.js",                    ("nodejs", "npm", "pnpm"), None),
+    "rustup":   ("Rust (rustup)",              ("rustup",),             None),
+    "go":       ("Go",                         ("go",),                 None),
+    "cpp":      ("C/C++ 工具链",               ("gcc", "clang", "valgrind"), None),
+    "gittools": ("Git 工具",                   ("git-delta", "lazygit", "git-lfs"), None),
     # ---- CLI 增强 ----
-    "cli":      ("终端工具 (tmux/btop/eza/bat/zoxide/fd/ripgrep)",
-                 ("tmux", "btop", "eza", "bat", "zoxide", "fd", "ripgrep"), None),
-    "editor":   ("终端编辑器 (helix/micro)",        ("helix", "micro"),       None),
-    "file":     ("文件管理 (yazi)",                 ("yazi",),                None),
-    "sysinfo":  ("系统信息+磁盘 (fastfetch/duf/ncdu)",
-                 ("fastfetch", "duf", "ncdu"), None),
-    "json":     ("JSON 工具 (jq/yq)",               ("jq", "yq"),             None),
-    "netdiag":  ("网络诊断 (nmap/ncat/mosh/httpie/iperf3)",
-                 ("nmap", "ncat", "mosh", "httpie", "iperf3"), None),
-    "starship": ("终端提示符 (starship)",           ("starship",),            None),
-    "man":      ("速查手册 (tldr/cheat)",           ("tldr", "cheat"),        None),
-    "nav":      ("目录导航 (broot/direnv)",         ("broot", "direnv"),      None),
-    "plocate":  ("文件索引 (plocate)",              ("plocate",),             None),
-    "netadd":   ("网络补充 (mtr/whois)",            ("mtr", "whois"),         None),
+    "cli":      ("终端工具",   ("tmux", "btop", "eza", "bat", "zoxide", "fd",
+                                "ripgrep", "fzf", "tldr"), None),
+    "editor":   ("终端编辑器", ("neovim", "helix", "micro"), None),
+    "file":     ("文件管理",   ("yazi", "broot", "plocate", "direnv"), None),
+    "sysinfo":  ("系统信息+磁盘",              ("fastfetch", "duf", "ncdu"), None),
+    "json":     ("JSON/YAML 工具",            ("jq", "go-yq"),         None),
+    "netdiag":  ("网络诊断",   ("nmap", "mosh", "httpie", "iperf3", "mtr", "whois"), None),
     # ---- 容器 ----
-    "container":("Podman/K8s (podman/kubectl/k9s/helm)",
-                 ("podman", "kubectl", "k9s", "helm"), None),
+    "container":("Podman/K8s", ("podman", "kubectl", "k9s", "helm"),   None),
 }
-# 可折叠分组: key -> 父级行，进入后批量多选
-GROUPS = {
-    "langs": {
-        "label": "编程语言",
-        "keys": ["python", "rustup", "go", "java", "node", "lua", "php", "ruby"],
-    },
-    "cpp": {
-        "label": "C/C++ 工具",
-        "keys": ["clang", "valgrind"],
-    },
-    "git_tools": {
-        "label": "Git 工具",
-        "keys": ["git", "lazygit", "gitx"],
-    },
+
+# 仅 archlinuxcn 仓库提供（官方仓库没有）的包:选中时自动启用 archlinuxcn
+CN_PKGS = {"yay", "paru"}
+
+# 包的一行说明（按包选择子菜单展示用）。众所周知的不写（lua/python/nodejs 等）。
+PKG_DESC = {
+    # 基础软件包
+    "base-devel":  "AUR/源码构建工具组",
+    "man-db":      "man 命令",
+    "man-pages":   "系统手册页",
+    # 开发
+    "gcc":         "GNU C/C++ 编译器",
+    "clang":       "C/C++ 编译器 (LLVM)",
+    "valgrind":    "内存泄漏/性能检测",
+    "npm":         "Node 包管理器 (Arch 的 nodejs 不自带)",
+    "pnpm":        "快速省磁盘的包管理器",
+    "yay":         "AUR 助手 [archlinuxcn 源]",
+    "paru":        "AUR 助手 [archlinuxcn 源]",
+    "git-delta":   "diff 语法高亮 (side-by-side)",
+    "lazygit":     "git 终端 UI",
+    # CLI 增强
+    "neovim":      "vim 系现代编辑器",
+    "helix":       "模态编辑器 (vim 系，自带 LSP)",
+    "micro":       "易上手的编辑器",
+    "yazi":        "终端文件管理器 TUI",
+    "broot":       "交互式目录树导航",
+    "plocate":     "全盘文件秒搜 (索引)",
+    "direnv":      "按目录自动加载环境变量",
+    "tmux":        "终端复用器",
+    "btop":        "资源监视器 (top 替代)",
+    "eza":         "ls 替代，图标+git 状态",
+    "bat":         "cat 替代，语法高亮",
+    "zoxide":      "智能 cd，记住常用目录",
+    "fd":          "find 替代，语法更简",
+    "ripgrep":     "grep 替代，极快 (LazyVim 依赖)",
+    "fzf":         "模糊搜索 (Ctrl-R/Ctrl-T)",
+    "tldr":        "命令示例速查",
+    "fastfetch":   "系统信息概览 (neofetch 替代)",
+    "duf":         "磁盘空间一览 (df 替代)",
+    "ncdu":        "交互式磁盘占用分析",
+    "go-yq":       "YAML/XML/TOML 处理器 (jq 语法)",
+    "nmap":        "端口/主机扫描 (内含 ncat)",
+    "mosh":        "弱网稳定的 SSH",
+    "httpie":      "人性化的 curl",
+    "iperf3":      "网络带宽测速",
+    "mtr":         "traceroute+ping 合体",
+    "whois":       "域名 WHOIS 查询",
+    # 容器
+    "podman":      "无守护进程容器引擎 (docker 替代)",
+    "kubectl":     "Kubernetes 命令行",
+    "k9s":         "Kubernetes TUI",
+    "helm":        "Kubernetes 包管理器",
+    # Zsh 插件（伪包名，走 git clone 而非 pacman）
+    "zsh-autosuggestions":    "命令自动建议",
+    "zsh-syntax-highlighting": "命令语法高亮",
 }
+
+
+def menu_pkgs(key):
+    """任一勾选项对应的选择单元元组。
+
+    统一覆盖 PACKAGE_ITEMS 与 base/fonts/zsh_plugins 等特殊项，
+    使"按包选择"子菜单、(n/m) 计数、执行层取子集共用一套逻辑。
+    """
+    if key in PACKAGE_ITEMS:
+        return PACKAGE_ITEMS[key][1]
+    if key == "base":
+        return tuple(BASE_PKGS)
+    if key == "zsh_plugins":
+        return tuple(name for _url, name in ZSH_PLUGINS)
+    return ()
+
+
+def menu_label(key):
+    if key in PACKAGE_ITEMS:
+        return PACKAGE_ITEMS[key][0]
+    return {"base": "基础软件包", "zsh_plugins": "Zsh 插件"}[key]
+
+
+def is_multi_pkg(key):
+    """该菜单项是否为多包组（空格进入"按包选择"）。"""
+    return len(menu_pkgs(key)) > 1
+
+
+def selected_pkgs(st, key):
+    """该组当前勾选的成员列表；未自定义时默认全选。"""
+    pkgs = menu_pkgs(key)
+    selmap = st.get("pkgsel", {}).get(key, {})
+    return [p for p in pkgs if selmap.get(p, True)]
+
+
+def chosen_pkgs(st):
+    """所有已勾选组里当前选中的包集合（判断是否需要 archlinuxcn 用）。"""
+    out = set()
+    for key, (_, pkgs, _unit) in PACKAGE_ITEMS.items():
+        if st.get(key):
+            out.update(selected_pkgs(st, key))
+    return out
 
 # 非装包项的说明: key -> 这一项到底改了什么（菜单详情栏用）
 ACTION_DETAIL = {
     "user":          "选择配置目标: 创建新用户 / 指定已有用户 / root",
     "mirror":        "改写 /etc/pacman.d/mirrorlist（所选源排第一，其余回退）",
     "locale":        "启用 en_US.UTF-8 + zh_CN.UTF-8，写入 /etc/locale.conf",
-    "timezone":      "交互输入时区（默认 Asia/Shanghai），符号链接 /etc/localtime",
-    "docker_mirror": "写入 /etc/docker/daemon.json 的 registry-mirrors 多源回退",
+    "timezone":      "中国大陆环境自动设为 Asia/Shanghai（国内源/IP 判定），其它地区交互输入",
+    "prompt":        "单选提示符主题: Powerlevel10k(zsh 专属,自动勾选 Zsh) / starship(跨 Shell,bash 也可用) / 不配置",
+    "docker_mirror": "合并写入 /etc/docker/daemon.json 的 registry-mirrors（其余键保留）",
     "wsl_systemd":   "在 /etc/wsl.conf 写入 [boot] systemd=true",
     "wsl_default":   "在 /etc/wsl.conf 写入 [user] default=<新用户>",
-}
-
-# 各可选包/服务的中文说明，用于菜单详情栏
-ITEM_HELP = {
-    "network":  "网络管理服务，提供 nmtui / nmcli 等工具",
-    "sshd":     "SSH 远程登录服务端",
-    "chrony":   "NTP 时间同步客户端/服务端（WSL 默认已同步）",
-    "cronie":   "定时任务调度，支持 crontab",
-    "ufw":      "简单防火墙前端（原生 Arch）",
-    "python":   "Python 解释器与标准库",
-    "rustup":   "Rust 工具链安装与管理器",
-    "go":       "Go 语言编译器及标准工具",
-    "java":     "OpenJDK 运行与开发环境",
-    "node":     "Node.js 替代运行时（bun / deno）",
-    "lua":      "Lua 脚本语言解释器",
-    "php":      "PHP 解释器与核心扩展",
-    "ruby":     "Ruby 解释器与 gem",
-    "clang":    "Clang / LLVM C/C++ 编译器",
-    "valgrind": "内存泄漏检测与性能分析工具",
-    "git":      "git-delta：语法高亮的 diff 查看器",
-    "lazygit":  "Git 仓库终端交互界面（TUI）",
-    "gitx":     "git-lfs 大文件管理 / git-open 打开仓库网页",
-    "paru":     "AUR 助手（archlinuxcn）",
-    "cli":      "现代化终端工具集（tmux / btop / eza / bat / zoxide / fd / ripgrep）",
-    "editor":   "终端文本编辑器（helix / micro）",
-    "file":     "Yazi 终端文件管理器",
-    "sysinfo":  "系统信息、磁盘与目录分析（fastfetch / duf / ncdu）",
-    "json":     "命令行 JSON / YAML 处理工具（jq / yq）",
-    "netdiag":  "网络诊断与远程工具（nmap / ncat / mosh / httpie / iperf3）",
-    "starship": "跨 Shell 自定义提示符（若启用 Zsh 会自动初始化）",
-    "man":      "命令行速查手册（tldr / cheat）",
-    "nav":      "目录快速浏览与环境切换（broot / direnv）",
-    "plocate":  "文件索引与快速定位（mlocate 替代品）",
-    "netadd":   "网络补充工具（mtr / whois）",
-    "container":"容器与 Kubernetes 工具链（podman / kubectl / k9s / helm）",
 }
 
 
@@ -533,42 +603,32 @@ def item_detail(key, st):
     """菜单详情栏：这一项到底会装哪些包 / 改哪些文件。"""
     if key in ACTION_DETAIL:
         return ACTION_DETAIL[key]
-    if key in PACKAGE_ITEMS:
-        _, pkgs, unit = PACKAGE_ITEMS[key]
-        desc = ITEM_HELP.get(key)
-        s = "安装: " + " ".join(pkgs)
-        if unit:
-            s += "  ·  启用服务: " + unit
-        if desc:
-            return desc + "  ·  " + s
+    if key in PACKAGE_ITEMS or key == "base":
+        sel = selected_pkgs(st, key)
+        s = "安装: " + (" ".join(sel) if sel else "（未选任何包，空格进入选择）")
+        if key in PACKAGE_ITEMS and PACKAGE_ITEMS[key][2]:
+            s += "  ·  启用服务: " + PACKAGE_ITEMS[key][2]
+        if len(menu_pkgs(key)) > 1:
+            s += "  ·  空格: 按包选择"
         return s
-    if key == "base":
-        pkgs = list(BASE_PKGS)
-        if st["zsh"]:
-            pkgs += ["zsh", "zsh-completions"]
-        return "安装: " + " ".join(pkgs)
-    if key == "fonts":
-        return "安装: " + " ".join(FONT_PKGS)
     if key == "microcode":
         return "安装: intel-ucode 或 amd-ucode（按 /proc/cpuinfo 自动识别，WSL 跳过）"
     if key == "zsh":
-        return ("安装: zsh zsh-completions  ·  克隆插件: "
-                + " ".join(n for _, n in ZSH_PLUGINS)
-                + "  ·  写入 ~/.zshrc 并 chsh")
+        s = "安装: zsh zsh-completions  ·  写入基础 ~/.zshrc 并 chsh"
+        if st.get("prompt") == "p10k":
+            s += "  ·  附带 p10k 主题克隆"
+        elif st.get("prompt") == "starship":
+            s += "  ·  附带 starship 集成"
+        return s
+    if key == "zsh_plugins":
+        sel = selected_pkgs(st, "zsh_plugins")
+        return ("克隆所选插件到 ~/.zsh/ 并在 .zshrc 加载: "
+                + (" ".join(sel) if sel else "（未选任何插件，空格进入选择）"))
     if key == "nvim":
-        return ("安装: " + " ".join(NVIM_DEPS)
+        return ("安装 LazyVim 依赖: " + " ".join(NVIM_DEPS)
                 + "  ·  克隆 LazyVim/starter 到 ~/.config/nvim（旧配置先备份）")
     if key == "docker":
         return "安装: docker docker-compose docker-buildx  ·  启用服务: docker  ·  目标用户加入 docker 组"
-    if key == "aur":
-        return "安装: yay（来自 archlinuxcn 仓库）"
-    if key in GROUPS:
-        grp = GROUPS[key]
-        parts = []
-        for k in grp["keys"]:
-            _, pkgs, _ = PACKAGE_ITEMS[k]
-            parts.append("%s: %s" % (PACKAGE_ITEMS[k][0], " ".join(pkgs)))
-        return grp["label"] + " — " + "  ·  ".join(parts)
     return ""
 
 
@@ -611,75 +671,101 @@ def wrap_disp(s, limit, max_lines):
     return lines
 
 
+def pad_disp(s, width):
+    """按显示列宽右侧补空格到 width 列（CJK 宽字符安全）。"""
+    return s + " " * max(0, width - disp_width(s))
+
+
+# Zsh 增强插件（git clone 到 ~/.zsh/，非 pacman 包;按包选择子菜单用包名做键）
 ZSH_PLUGINS = [
     ("https://github.com/zsh-users/zsh-autosuggestions", "zsh-autosuggestions"),
     ("https://github.com/zsh-users/zsh-syntax-highlighting", "zsh-syntax-highlighting"),
-    ("https://github.com/romkatv/powerlevel10k.git", "powerlevel10k"),
 ]
 
-ZSH_CONFIG = """# ============================
-#  Zsh 配置 — 美化版
-# ============================
-export PATH=$HOME/.local/bin:$PATH
+# 提示符主题: p10k 是 zsh 专属主题（git clone）;starship 跨 Shell（pacman 安装）
+P10K_REPO = ("https://github.com/romkatv/powerlevel10k.git", "powerlevel10k")
 
-source $HOME/.zsh/powerlevel10k/powerlevel10k.zsh-theme
+PROMPT_LABEL = {"p10k": "Powerlevel10k", "starship": "starship", "": "未配置"}
 
-source $HOME/.zsh/zsh-autosuggestions/zsh-autosuggestions.zsh
-source $HOME/.zsh/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
 
-setopt AUTO_CD
-setopt CORRECT
-setopt NO_BEEP
+def build_zsh_config(st):
+    """按当前选择动态生成 .zshrc:插件与提示符互斥、按需加载。
 
-HISTFILE=~/.zsh_history
-HISTSIZE=10000
-SAVEHIST=10000
-setopt SHARE_HISTORY
-setopt HIST_IGNORE_DUPS
-setopt HIST_REDUCE_BLANKS
+    p10k 与 starship 只会写入其一——旧模板两者叠加加载,后初始化的
+    starship 会覆盖 p10k 主题,属于实际冲突。
+    """
+    lines = []
+    a = lines.append
+    a("# ============================")
+    a("#  Zsh 配置 — arch-setup 版")
+    a("# ============================")
+    a("export PATH=$HOME/.local/bin:$PATH")
+    a("")
+    a("setopt AUTO_CD")
+    a("setopt CORRECT")
+    a("setopt NO_BEEP")
+    a("")
+    a("HISTFILE=~/.zsh_history")
+    a("HISTSIZE=10000")
+    a("SAVEHIST=10000")
+    a("setopt SHARE_HISTORY")
+    a("setopt HIST_IGNORE_DUPS")
+    a("setopt HIST_REDUCE_BLANKS")
+    a("")
+    a("alias ll='ls -alF --color=auto'")
+    a("alias la='ls -A --color=auto'")
+    a("alias l='ls -CF --color=auto'")
+    a("alias grep='grep --color=auto'")
+    a("alias ..='cd ..'")
+    a("alias ...='cd ../..'")
+    a("")
+    a("autoload -Uz compinit && compinit")
+    a("zstyle ':completion:*' menu select")
+    a("zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'")
+    a("")
+    a('if grep -qi "microsoft\\|wsl" /proc/version 2>/dev/null; then')
+    a("    alias winhome='cd /mnt/c/Users/$([ ! -z \"$USER\" ] && echo $USER || echo $USERNAME)'")
+    a("fi")
+    a("")
+    if st.get("zsh_plugins"):
+        for name in selected_pkgs(st, "zsh_plugins"):
+            a('source $HOME/.zsh/%s/%s.zsh' % (name, name))
+        a("")
+    if st.get("prompt") == "p10k":
+        a('source $HOME/.zsh/powerlevel10k/powerlevel10k.zsh-theme')
+        a('[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh')
+        a("")
+    elif st.get("prompt") == "starship":
+        a('if command -v starship >/dev/null 2>&1; then')
+        a('    eval "$(starship init zsh)"')
+        a('fi')
+        a("")
+    a('if command -v zoxide >/dev/null 2>&1; then')
+    a('    eval "$(zoxide init zsh)"')
+    a('fi')
+    a("")
+    a('[[ -f ~/.zsh_env ]] && source ~/.zsh_env')
+    return "\n".join(lines) + "\n"
 
-alias ll='ls -alF --color=auto'
-alias la='ls -A --color=auto'
-alias l='ls -CF --color=auto'
-alias grep='grep --color=auto'
-alias ..='cd ..'
-alias ...='cd ../..'
-
-autoload -Uz compinit && compinit
-zstyle ':completion:*' menu select
-zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}'
-
-if grep -qi "microsoft\\|wsl" /proc/version 2>/dev/null; then
-    alias winhome='cd /mnt/c/Users/$([ ! -z "$USER" ] && echo $USER || echo $USERNAME)'
-fi
-
-if command -v starship >/dev/null 2>&1; then
-    eval "$(starship init zsh)"
-fi
-
-if command -v zoxide >/dev/null 2>&1; then
-    eval "$(zoxide init zsh)"
-fi
-
-[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
-[[ -f ~/.zsh_env ]] && source ~/.zsh_env
-"""
-
-DOCKER_DAEMON = """{
-  "registry-mirrors": [
-    "https://docker.1ms.run",
-    "https://docker.mirrors.ustc.edu.cn",
-    "https://hub-mirror.c.163.com",
-    "https://mirror.baidubce.com"
-  ]
-}
-"""
+# Docker registry-mirrors 候选表: (key, 标签, URL, 备注)
+#   菜单中多选，按选择顺序写入 daemon.json 的 registry-mirrors。
+#   默认全部未选中；表首三个为推荐组合，仅在"已有 daemon.json 但无镜像源"
+#   时作为种子。163/百度等源 2024 年起已停服，不再列入；镜像源可用性随
+#   时间变化，可自行增删。
+DOCKER_MIRRORS = [
+    ("1ms",      "毫秒镜像", "https://docker.1ms.run",             "速度快，推荐"),
+    ("daocloud", "DaoCloud", "https://docker.m.daocloud.io",       "老牌稳定"),
+    ("1panel",   "1Panel",   "https://docker.1panel.live",         ""),
+    ("xuanyuan", "轩辕镜像", "https://docker.xuanyuan.me",         "免费，速度快"),
+    ("ustc",     "中科大",   "https://docker.mirrors.ustc.edu.cn", "限校内"),
+]
+DOCKER_MIRROR_DEFAULT = ["1ms", "daocloud", "1panel"]
 
 # ---------------------------------------------------------------------------
 #  预检测 (包 + 用户级配置)
 # ---------------------------------------------------------------------------
 
-def detect(st, now):
+def detect(st):
     """根据目标用户刷新 locked 表；已存在的项强制勾选并锁定。"""
     st["target_user"] = resolve_target(st)
     st["locked"] = {}
@@ -694,11 +780,28 @@ def detect(st, now):
     lock("base", all(pkg_installed(p) for p in BASE_PKGS))
     lock("docker", pkg_installed("docker") or shutil.which("docker") is not None)
     lock("docker_mirror", os.path.exists("/etc/docker/daemon.json"))
+    if st["locked"].get("docker_mirror"):
+        # 已配置过:读回现有镜像源，重跑合并写入时不丢用户已有选择；
+        # 已有 daemon.json 但无 registry-mirrors 时用推荐组合作种子
+        keys, extra = read_configured_mirrors()
+        if keys or extra:
+            st["docker_mirrors"] = keys
+            st["dmirror_extra"] = extra
+        else:
+            st["docker_mirrors"] = list(DOCKER_MIRROR_DEFAULT)
     lock("locale", locale_present())
     lock("zsh", user_zsh_present(home))
-    lock("fonts", all(pkg_installed(p) for p in FONT_PKGS))
+    lock("zsh_plugins",
+         all(os.path.isdir(os.path.join(home, ".zsh", name, ".git"))
+             for _u, name in ZSH_PLUGINS))
+    # 提示符已配置过则锁定并回显（重跑改写受 .zshrc 标识跳过保护约束）
+    if os.path.isdir(os.path.join(home, ".zsh", "powerlevel10k")):
+        st["prompt"] = "p10k"
+        st["locked"]["prompt"] = True
+    elif pkg_installed("starship") or shutil.which("starship") is not None:
+        st["prompt"] = "starship"
+        st["locked"]["prompt"] = True
     lock("nvim", user_nvim_present(home))
-    lock("aur", pkg_installed("yay") or shutil.which("yay") is not None)
     lock("timezone", os.path.islink("/etc/localtime"))
     lock("microcode", pkg_installed("intel-ucode") or pkg_installed("amd-ucode"))
     for key, (label, pkgs, unit) in PACKAGE_ITEMS.items():
@@ -721,7 +824,9 @@ def detect(st, now):
 
     if is_wsl():
         disable("microcode", "WSL 不适用，微码由 Windows 宿主管理")
-        disable("chrony", "WSL 默认同步 Windows 宿主时间")
+        disable("network", "WSL 无效，网络由 Windows 宿主管理")
+        disable("chrony", "WSL 无效，时间由 Windows 宿主自动同步")
+        disable("ufw", "WSL 无效，防火墙由 Windows 宿主管理")
     elif microcode_pkg() is None:
         disable("microcode", "无法从 /proc/cpuinfo 识别 CPU 厂商")
 
@@ -752,9 +857,11 @@ def user_zsh_present(home):
     if not os.path.isfile(rc):
         return False
     try:
-        return "美化版" in open(rc).read()
+        content = open(rc).read()
     except OSError:
         return False
+    # "美化版" 是旧版标识，保留兼容避免重跑时误覆盖旧配置
+    return "美化版" in content or "arch-setup" in content
 
 
 def user_nvim_present(home):
@@ -781,11 +888,29 @@ def reflector_present():
     return "## Arch Linux repository mirrorlist" in content and "# Generated by reflector" in content
 
 
+def read_configured_mirrors():
+    """读取现有 daemon.json 的 registry-mirrors，映射回候选表 key。
+
+    返回 (keys, extra)：候选表内的 URL 归为 key，候选表外的原样保留在
+    extra——重跑合并写入时一并写回，不丢用户手工加的镜像源。
+    """
+    try:
+        with open("/etc/docker/daemon.json") as f:
+            data = json.load(f)
+        urls = data.get("registry-mirrors", []) if isinstance(data, dict) else []
+    except (OSError, ValueError):
+        return [], []
+    known = {u: k for k, _l, u, _n in DOCKER_MIRRORS}
+    keys = [known[u] for u in urls if u in known]
+    extra = [u for u in urls if u not in known]
+    return keys, extra
+
+
 # ---------------------------------------------------------------------------
 #  执行层
 # ---------------------------------------------------------------------------
 
-def run_create_user(st, now, reboot, failures):
+def run_create_user(st, reboot, failures):
     if not st["create_user"]:
         return
     u = st["new_username"]
@@ -804,18 +929,18 @@ def run_create_user(st, now, reboot, failures):
             err("两次输入不一致或为空，请重试")
         if run(["chpasswd"], input="%s:%s\n" % (u, pw1), text=True).returncode:
             failures.append("为用户 %s 设置密码失败" % u)
-    enable_wheel_sudo(now, failures)
+    # wheel 组 sudo 放行移到 ensure_user_sudo：需等 base 装好 sudo 后执行
     if is_wsl() and st["wsl_default"]:
         st["_pending_wsl_default"] = u
         info("WSL 默认登录用户将在全部步骤成功后写入，避免中途失败卡在新用户")
 
 
-def run_mirror(st, now, reboot, failures):
+def run_mirror(st, reboot, failures):
     mirror = st["mirror"]
     if mirror == "official":
         info("已选择官方源，保持现有 mirrorlist 与 pacman.conf 不变")
     elif mirror == "reflector":
-        run_reflector(st, now, reboot, failures)
+        run_reflector(st, reboot, failures)
     else:
         info("配置镜像源：%s（所选源优先，其余回退）…" % MIRROR_LABEL[mirror])
         ml = "/etc/pacman.d/mirrorlist"
@@ -826,7 +951,9 @@ def run_mirror(st, now, reboot, failures):
             f.write(content)
 
     cn_enabled = False
-    if mirror in ("tuna", "ustc", "aliyun", "tencent", "huawei") or st["aur"] or st["paru"]:
+    # 选中了仅 archlinuxcn 提供的包（bun/paru 等）时，即使官方源也自动启用 archlinuxcn
+    if (mirror in ("tuna", "ustc", "aliyun", "tencent", "huawei")
+            or st["aur"] or chosen_pkgs(st) & CN_PKGS):
         ensure_archlinuxcn_repo(mirror)
         cn_enabled = True
 
@@ -849,15 +976,16 @@ def run_mirror(st, now, reboot, failures):
     ok("镜像源配置完成")
 
 
-def run_base(st, now, reboot, failures):
-    pkgs = list(BASE_PKGS)
-    if st["zsh"]:
-        pkgs += ["zsh", "zsh-completions"]
+def run_base(st, reboot, failures):
+    pkgs = selected_pkgs(st, "base")
+    if not pkgs:
+        info("基础软件包: 未选择任何包，跳过")
+        return
     if not pacman_S(*pkgs):
         failures.append("基础软件包安装失败，请手动执行: pacman -S %s" % " ".join(pkgs))
         warn("基础软件包安装失败，脚本继续（后续依赖可能缺失）")
         return
-    ok("基础软件包安装完成")
+    ok("基础软件包安装完成 (%d 个)" % len(pkgs))
 
 
 def service_enabled(unit):
@@ -867,19 +995,28 @@ def service_enabled(unit):
     return run_ok(["systemctl", "is-enabled", unit])
 
 
-def run_pkgs(st, key, now, reboot, failures):
-    """纯包项：安装该 key 的包元组，失败记录。"""
-    label, pkgs, _ = PACKAGE_ITEMS[key]
-    info("安装 %s …" % label)
-    if not pacman_S(*pkgs):
-        failures.append("%s 安装失败（部分软件可能不在当前仓库，请手动: pacman -S %s）"
-                        % (label, " ".join(pkgs)))
-        warn("%s 安装失败，脚本继续" % label)
+def run_pkgs(st, key, reboot, failures):
+    """纯包项：安装该组当前选中的包；整组失败时逐包重试定位坏包名。"""
+    label, _pkgs, _ = PACKAGE_ITEMS[key]
+    pkgs = selected_pkgs(st, key)
+    if not pkgs:
+        info("%s: 未选择任何包，跳过" % label)
         return
-    ok("%s 已安装" % label)
+    info("安装 %s: %s …" % (label, " ".join(pkgs)))
+    if pacman_S(*pkgs):
+        ok("%s 已安装" % label)
+        return
+    # pacman 遇到一个不存在的目标会整批失败：逐包重试，别让一个坏名字拖垮整组
+    bad = [p for p in pkgs if not pacman_S(p)]
+    if bad:
+        failures.append("%s 部分安装失败: %s（可能不在当前已配置的仓库，请手动确认包名）"
+                        % (label, " ".join(bad)))
+        warn("%s 安装失败: %s" % (label, " ".join(bad)))
+    else:
+        ok("%s 已安装（整组失败但逐包重试成功）" % label)
 
 
-def run_service(st, key, now, reboot, failures):
+def run_service(st, key, reboot, failures):
     """服务项：装包（如无）→ 非 WSL 时 systemctl enable --now；WSL 跳过并记重启。"""
     label, pkgs, unit = PACKAGE_ITEMS[key]
     info("配置 %s (%s) …" % (label, unit))
@@ -888,8 +1025,12 @@ def run_service(st, key, now, reboot, failures):
         warn("%s 包安装失败，脚本继续" % label)
         return
     if is_wsl():
-        reboot.append("%s 已安装；WSL 下不执行 systemctl，重启 WSL 后由 systemd 管理" % label)
-        ok("%s 已安装（WSL：重启后由 systemd 管理）" % label)
+        if st.get("wsl_systemd"):
+            run_ok(["systemctl", "enable", unit])   # 只建开机软链，不需要 systemd 已运行
+            reboot.append("%s 已安装并 enable，重启 WSL 后由 systemd 自动启动" % label)
+        else:
+            reboot.append("%s 已安装；未启用 systemd，重启后不会自启（可勾选 WSL systemd 项）" % label)
+        ok("%s 已安装（WSL）" % label)
         return
     if not run_ok(["systemctl", "enable", "--now", unit]):
         failures.append("%s 服务启动失败，请手动执行: systemctl enable --now %s" % (label, unit))
@@ -898,7 +1039,7 @@ def run_service(st, key, now, reboot, failures):
     ok("%s 服务已启用并启动 (%s)" % (label, unit))
 
 
-def run_reflector(st, now, reboot, failures):
+def run_reflector(st, reboot, failures):
     """reflector 自动优选镜像源；严格仅非 WSL 执行（WSL 易出错）。"""
     ml = "/etc/pacman.d/mirrorlist"
     if is_wsl():
@@ -914,15 +1055,38 @@ def run_reflector(st, now, reboot, failures):
     ok("reflector 已生成最优镜像列表")
 
 
-def run_timezone(st, now, reboot, failures):
-    """设置系统时区；原生 Arch 与 WSL 均适用。默认 Asia/Shanghai，可交互输入。"""
-    tz = "Asia/Shanghai"
+CN_MIRROR_KEYS = ("tuna", "ustc", "aliyun", "tencent", "huawei")
+
+
+def looks_like_cn(st):
+    """中国大陆环境判定:国内镜像源是最强信号,再退一步做 IP 地理探测。
+
+    geo 探测 best-effort（3 秒超时、失败静默），会把 IP 暴露给
+    ipinfo.io——介意可删掉这段，只会退回交互输入。
+    """
+    if st.get("mirror") in CN_MIRROR_KEYS:
+        return True
     try:
-        ans = input("设置系统时区（默认 Asia/Shanghai，回车使用默认）: ").strip()
-        if ans:
-            tz = ans
-    except (EOFError, KeyboardInterrupt):
-        pass
+        r = subprocess.run(["curl", "-fsS", "-m", "3", "https://ipinfo.io/country"],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and r.stdout.strip() == "CN"
+    except Exception:
+        return False
+
+
+def run_timezone(st, reboot, failures):
+    """设置系统时区;中国大陆环境自动设 Asia/Shanghai,不再要求手动确认。"""
+    if looks_like_cn(st):
+        tz = "Asia/Shanghai"
+        info("检测到中国大陆环境，时区自动设为 %s" % tz)
+    else:
+        tz = "Asia/Shanghai"
+        try:
+            ans = input("设置系统时区（默认 Asia/Shanghai，回车使用默认）: ").strip()
+            if ans:
+                tz = ans
+        except (EOFError, KeyboardInterrupt):
+            pass
     zonefile = "/usr/share/zoneinfo/%s" % tz
     if not os.path.exists(zonefile):
         failures.append("时区 %s 不存在，未设置" % tz)
@@ -938,7 +1102,7 @@ def run_timezone(st, now, reboot, failures):
     ok("时区已设为 %s" % tz)
 
 
-def run_ufw(st, now, reboot, failures):
+def run_ufw(st, reboot, failures):
     """防火墙：原生 Arch 装 ufw、放行 SSH、启用并注册服务；WSL 跳过记重启。"""
     label, pkgs, unit = PACKAGE_ITEMS["ufw"]
     info("配置 %s …" % label)
@@ -974,7 +1138,7 @@ def microcode_pkg():
     return None
 
 
-def run_microcode(st, now, reboot, failures):
+def run_microcode(st, reboot, failures):
     """CPU 微码：依据 /proc/cpuinfo 安装 intel-ucode 或 amd-ucode。
 
     WSL 与厂商无法识别两种情况已在菜单侧禁用，这里仅作兜底。
@@ -996,7 +1160,7 @@ def run_microcode(st, now, reboot, failures):
     ok("%s 已安装" % pkg)
 
 
-def run_docker(st, now, reboot, failures):
+def run_docker(st, reboot, failures):
     t = st["target_user"]
     if not (pkg_installed("docker") or shutil.which("docker")):
         info("安装 Docker …")
@@ -1009,13 +1173,19 @@ def run_docker(st, now, reboot, failures):
 
     if t != "root":
         if run_ok(["usermod", "-aG", "docker", t]):
-            now.append("%s 已加入 docker 组，需重新登录或执行 'newgrp docker' 后才能免 sudo 使用 docker" % t)
+            reboot.append("%s 已加入 docker 组，重启/重新登录后可免 sudo 使用 docker" % t)
         else:
             failures.append("无法将 %s 加入 docker 组" % t)
 
     if is_wsl():
-        failures.append("WSL 环境未执行 systemctl enable docker（systemd 不可用）")
-        now.append("如需在 WSL 使用 docker：安装 Docker Desktop 并启用 WSL 集成，或在 WSL 内手动启动 dockerd")
+        if st["wsl_systemd"]:
+            # systemctl enable 只创建开机软链，不需要 systemd 已运行；重启 WSL 后自启
+            if run_ok(["systemctl", "enable", "docker"]):
+                reboot.append("docker 服务已 enable，重启 WSL 后随 systemd 自动启动")
+            else:
+                failures.append("systemctl enable docker 失败，请重启后手动执行: sudo systemctl enable --now docker")
+        else:
+            reboot.append("WSL 未启用 systemd：重启后需手动启动 dockerd，或改用 Docker Desktop（WSL 集成）")
     else:
         if not run_ok(["systemctl", "enable", "docker"]):
             err("systemctl enable docker 失败")
@@ -1025,28 +1195,51 @@ def run_docker(st, now, reboot, failures):
     ok("Docker 安装配置完成")
 
 
-def run_docker_mirror(st, now, reboot, failures):
+def run_docker_mirror(st, reboot, failures):
     if not st["docker_mirror"]:
         return
-    info("配置 Docker 国内镜像源 …")
+    urls = [u for k, _l, u, _n in DOCKER_MIRRORS if k in st["docker_mirrors"]]
+    urls += st.get("dmirror_extra") or []   # 用户手工配置过的候选表外镜像源，原样写回
+    if not urls:
+        warn("未选择任何 Docker 镜像源，跳过该项")
+        return
+    info("配置 Docker 镜像源: %s …" % " ".join(urls))
     os.makedirs("/etc/docker", exist_ok=True)
     cfg = "/etc/docker/daemon.json"
+    merged = False
     if os.path.exists(cfg):
-        shutil.copy2(cfg, "%s.bak.%d" % (cfg, int(time.time())))
-        warn("已备份原 daemon.json")
-    with open(cfg, "w") as f:
-        f.write(DOCKER_DAEMON)
+        # 合并写入：只替换 registry-mirrors，保留用户已有的其它配置键
+        try:
+            with open(cfg) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                shutil.copy2(cfg, "%s.bak.%d" % (cfg, int(time.time())))
+                data["registry-mirrors"] = urls
+                with open(cfg, "w") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                    f.write("\n")
+                merged = True
+                ok("已合并写入 registry-mirrors（原文件已备份，其余配置保留）")
+        except (ValueError, OSError):
+            pass
+    if not merged:
+        if os.path.exists(cfg):
+            shutil.copy2(cfg, "%s.bak.%d" % (cfg, int(time.time())))
+            warn("原 daemon.json 不存在或无法解析，备份后写入")
+        with open(cfg, "w") as f:
+            json.dump({"registry-mirrors": urls}, f, indent=2)
+            f.write("\n")
     if not is_wsl() and shutil.which("systemctl"):
         if run_ok(["systemctl", "restart", "docker"]):
             ok("docker 服务已重启加载镜像源")
         else:
             failures.append("docker 重启加载镜像源失败，请手动执行: systemctl restart docker")
     else:
-        reboot.append("WSL/无 systemd：daemon.json 已写入，启动 dockerd 时自动读取生效（无需手动操作）")
+        reboot.append("daemon.json 已写入，重启后 dockerd 启动时自动读取生效")
     ok("Docker 镜像源已写入 /etc/docker/daemon.json")
 
 
-def run_locale(st, now, reboot, failures):
+def run_locale(st, reboot, failures):
     info("配置 Locale (en_US.UTF-8 + zh_CN.UTF-8) …")
     gen = "/etc/locale.gen"
     content = open(gen).read() if os.path.exists(gen) else ""
@@ -1072,7 +1265,7 @@ def run_locale(st, now, reboot, failures):
     ok("Locale 已写入 /etc/locale.conf (LANG=en_US.UTF-8)，已生成中英 UTF-8")
 
 
-def run_zsh(st, now, reboot, failures):
+def run_zsh(st, reboot, failures):
     t = st["target_user"]
     home = user_home(t)
     info("配置 Zsh (目标: %s , 家目录: %s) …" % (t, home))
@@ -1088,7 +1281,14 @@ def run_zsh(st, now, reboot, failures):
     os.makedirs(zsh_dir, exist_ok=True)
     chown_r(zsh_dir, t)
 
-    for url, name in ZSH_PLUGINS:
+    # 待克隆清单:所选增强插件 + p10k 主题（若提示符选了 p10k）
+    clones = []
+    if st.get("zsh_plugins"):
+        clones += [(url, name) for url, name in ZSH_PLUGINS
+                   if name in selected_pkgs(st, "zsh_plugins")]
+    if st.get("prompt") == "p10k":
+        clones.append(P10K_REPO)
+    for url, name in clones:
         dest = os.path.join(zsh_dir, name)
         if os.path.isdir(os.path.join(dest, ".git")):
             continue
@@ -1100,8 +1300,21 @@ def run_zsh(st, now, reboot, failures):
 
     chown_r(zsh_dir, t)
 
+    # 提示符为 starship 时安装包（p10k 是克隆仓库，上面已处理）
+    if st.get("prompt") == "starship" and not pkg_installed("starship"):
+        if not pacman_S("starship"):
+            failures.append("starship 安装失败，请手动执行: pacman -S starship")
+
     rc = os.path.join(home, ".zshrc")
-    if os.path.isfile(rc) and "美化版" in open(rc).read():
+    ours = False
+    if os.path.isfile(rc):
+        try:
+            content = open(rc).read()
+            # "美化版" 为旧版标识，同样视为本脚本产物，避免重跑误覆盖
+            ours = "美化版" in content or "arch-setup" in content
+        except OSError:
+            ours = False
+    if ours:
         info("已检测到本脚本写入的 .zshrc，跳过覆盖（可安全重跑）")
         # 修正可能残留的 root 属主：上次若在 write 与 chown 之间被中断，
         # .zshrc 会以 root 属主留下，且因含标识而永远跳过覆盖。
@@ -1112,15 +1325,16 @@ def run_zsh(st, now, reboot, failures):
             warn("已备份原 .zshrc")
             chown_r(bak, t)
         with open(rc, "w") as f:
-            f.write(ZSH_CONFIG)
+            f.write(build_zsh_config(st))
     chown_r(rc, t)
 
     if not run_ok(["chsh", "-s", "/bin/zsh", t]):
         warn("%s 切换默认 shell 为 zsh 失败" % t)
         failures.append("%s 切换 zsh 失败，请手动执行: chsh -s /bin/zsh %s" % (t, t))
 
-    now.append("Zsh 已配置：注销重新登录或执行 'exec zsh' 加载；首次进入会触发 p10k 个性化向导")
-    ok("Zsh 美化配置完成")
+    if st.get("prompt") == "p10k":
+        reboot.append("首次登录 zsh 会触发 p10k 个性化向导，按提示选择即可")
+    ok("Zsh 配置完成")
 
 
 def ensure_zsh_in_shells():
@@ -1133,19 +1347,19 @@ def ensure_zsh_in_shells():
                 f.write(zsh_path + "\n")
 
 
-def run_fonts(st, now, reboot, failures):
-    info("安装字体 (Meslo Nerd Font + 中文/Emoji) …")
+def run_fonts(st, reboot, failures):
+    """提示符的字体依赖:Nerd 图标 + 中文 + emoji,自动安装(非菜单项)。"""
+    info("安装字体 (Nerd/中文/Emoji，提示符依赖) …")
     if not pacman_S(*FONT_PKGS):
-        warn("部分字体安装失败，p10k 图标或中文可能显示异常")
-        failures.append("字体安装失败 (%s)，请手动执行: pacman -S %s" %
-                        (" ".join(FONT_PKGS), " ".join(FONT_PKGS)))
+        warn("字体安装失败，提示符图标或中文可能显示异常")
+        failures.append("字体安装失败，请手动执行: pacman -S %s" % " ".join(FONT_PKGS))
         return
     if is_wsl():
-        now.append("WSL:请在 Windows Terminal → 配置文件 → 外观 → 字体 选择 MesloLGS NF")
+        reboot.append("WSL: 请在 Windows Terminal → 配置文件 → 外观 → 字体 选择 MesloLGS NF")
     ok("字体安装完成")
 
 
-def run_nvim(st, now, reboot, failures):
+def run_nvim(st, reboot, failures):
     t = st["target_user"]
     home = user_home(t)
     info("配置 NeoVim LazyVim (目标: %s , 家目录: %s) …" % (t, home))
@@ -1191,22 +1405,11 @@ def run_nvim(st, now, reboot, failures):
     subprocess.run(["rm", "-rf", os.path.join(nvim_dir, ".git")])
     chown_r(nvim_dir, t)
 
-    now.append("NeoVim: 首次 'nvim' 会自动下载 LazyVim 插件，请保持网络畅通")
+    reboot.append("NeoVim: 首次启动会自动下载 LazyVim 插件，需保持网络畅通")
     ok("NeoVim LazyVim 配置完成")
 
 
-def run_aur(st, now, reboot, failures):
-    if pkg_installed("yay") or shutil.which("yay"):
-        info("yay 已安装，跳过")
-        return
-    info("安装 yay（来自 archlinuxcn 仓库）…")
-    if not pacman_S("yay"):
-        failures.append("yay 安装失败：请确认 archlinuxcn 仓库已配置后手动执行: pacman -S yay")
-        return
-    ok("yay 安装完成")
-
-
-def run_wsl_systemd(st, now, reboot, failures):
+def run_wsl_systemd(st, reboot, failures):
     if not is_wsl():
         return
     info("写入 /etc/wsl.conf [boot] systemd=true")
@@ -1215,7 +1418,7 @@ def run_wsl_systemd(st, now, reboot, failures):
     ok("WSL systemd 已写入")
 
 
-def apply_wsl_default(st, now, reboot, failures):
+def apply_wsl_default(st, reboot, failures):
     if not is_wsl() or not st.get("_pending_wsl_default"):
         return
     wsl_conf_set("user", "default", st["_pending_wsl_default"])
@@ -1258,6 +1461,8 @@ def read_key(win):
         return "enter"
     if c == ord(" "):
         return "space"
+    if c in (ord("a"), ord("A")):
+        return "a"
     if c == curses.KEY_UP:
         return "up"
     if c == curses.KEY_DOWN:
@@ -1274,7 +1479,7 @@ def radio_select(win, title, options, current):
     n = len(options)
     cur = max(0, min(n - 1, current)) if n else 0
     while True:
-        win.erase()
+        win.clear()
         try:
             win.addstr(0, 0, "==== %s （方向键 + 空格确认，esc/q 返回） ====" % title,
                        curses.color_pair(3))
@@ -1304,48 +1509,28 @@ def radio_select(win, title, options, current):
             return None
 
 
+def check_select(win, title, entries):
+    """多选子菜单：entries 为 [显示文本, 是否选中] 的可变列表，原地修改。
 
-def multi_select(win, title, keys, st):
-    """批量多选子菜单：空格切换选中，回车/esc/q 返回；已锁定/已禁用项仍可见但不可改。"""
-    curses.noecho()
-    curses.cbreak()
-    win.keypad(True)
-    curses.curs_set(0)
-    items = []
-    for k in keys:
-        label = PACKAGE_ITEMS[k][0]
-        locked = st["locked"].get(k)
-        disabled = st["disabled"].get(k)
-        items.append((k, label, locked, disabled))
+    空格 勾选/取消；a 全选/全不选；esc/q 返回（保留已作的修改）。
+    """
+    n = len(entries)
     cur = 0
-    n = len(items)
     while True:
-        win.erase()
+        win.clear()
         try:
-            win.addstr(0, 0, "==== %s （方向键 + 空格切换，回车/esc/q 返回） ====" % title,
+            win.addstr(0, 0, "==== %s（空格 勾选/取消 · a 全选/全不选 · esc 返回） ====" % title,
                        curses.color_pair(3))
         except curses.error:
             pass
-        for i, (k, label, locked, disabled) in enumerate(items):
-            y = 2 + i
-            if disabled:
-                mark, suffix = "[-]", " （%s）" % st["disabled"][k]
-                attr = curses.A_DIM
-            elif locked:
-                mark, suffix = "[*]", " (已配置)"
-                attr = curses.A_DIM
-            elif st[k]:
-                mark, suffix = "[*]", ""
-                attr = curses.A_NORMAL
-            else:
-                mark, suffix = "[ ]", ""
-                attr = curses.A_NORMAL
-            line = "  %s %s%s" % (mark, label, suffix)
+        for i, (text, sel) in enumerate(entries):
+            mark = "[*]" if sel else "[ ]"
+            line = "  > %s %s" % (mark, text) if i == cur else "    %s %s" % (mark, text)
             try:
                 if i == cur:
-                    win.addstr(y, 0, "> %s" % line[2:], curses.A_REVERSE | attr | curses.color_pair(3))
+                    win.addstr(2 + i, 0, line, curses.A_REVERSE | curses.color_pair(3))
                 else:
-                    win.addstr(y, 0, line, attr)
+                    win.addstr(2 + i, 0, line)
             except curses.error:
                 pass
         win.refresh()
@@ -1354,15 +1539,18 @@ def multi_select(win, title, keys, st):
             cur = max(0, cur - 1)
         elif k == "down":
             cur = min(n - 1, cur + 1)
-        elif k == "space":
-            mykey, _, locked, disabled = items[cur]
-            if not (locked or disabled):
-                st[mykey] = not st[mykey]
-        elif k in ("enter", "esc", "q"):
-            break
+        elif k in ("space", "enter"):
+            entries[cur][1] = not entries[cur][1]
+        elif k == "a":
+            all_on = all(e[1] for e in entries)
+            for e in entries:
+                e[1] = not all_on
+        elif k in ("esc", "q"):
+            return
+
 
 def build_rows(st):
-    """构建主菜单行列表: [(text, kind, key, locked, indent)]; header/group 不可直接勾选"""
+    """构建主菜单行列表: [(text, kind, key, locked, indent)]；header 为分组标题不可选中"""
     rows = []
     mark_on = "[*]"
     mark_off = "[ ]"
@@ -1370,24 +1558,12 @@ def build_rows(st):
     def header(text):
         rows.append((text, "header", "", False, 0))
 
-    def group_summary(gkey):
-        grp = GROUPS[gkey]
-        total = len(grp["keys"])
-        selected = [k for k in grp["keys"] if st.get(k)]
-        names = []
-        for k in selected[:3]:
-            short = PACKAGE_ITEMS[k][0].split()[0]
-            names.append(short)
-        if len(selected) > 3:
-            names.append("…")
-        if not selected:
-            detail = "未选"
-        else:
-            joined = ", ".join(names)
-            detail = ("已选 %d/%d: %s" % (len(selected), total, joined))
-        return "%s (%s) ▶" % (grp["label"], detail)
-
     def toggle_row(label, key, indent=0):
+        multi = is_multi_pkg(key)
+        if multi:
+            total = len(menu_pkgs(key))
+            sel = len(selected_pkgs(st, key)) if st.get(key) else 0
+            label = "%s (%d/%d)" % (label, sel, total)
         if st["disabled"].get(key):
             rows.append(("  " * indent + "[-] %s (%s)" % (label, st["disabled"][key]),
                          "toggle", key, True, indent))
@@ -1395,7 +1571,21 @@ def build_rows(st):
             rows.append(("  " * indent + "[*] %s (已配置)" % label, "toggle", key, True, indent))
         else:
             m = mark_on if st[key] else mark_off
-            rows.append(("  " * indent + "%s %s" % (m, label), "toggle", key, False, indent))
+            suffix = " ▶" if multi else ""
+            rows.append(("  " * indent + "%s %s%s" % (m, label, suffix),
+                         "toggle", key, False, indent))
+
+    def dmirror_row():
+        # Docker 镜像源:空格进入多选,子选择决定开关(全不选=停用)
+        locked = bool(st["locked"].get("docker_mirror"))
+        if locked:
+            rows.append(("  Docker 镜像源: 已配置 ▶", "submenu_dmirror", "docker_mirror", True, 1))
+        elif st["docker_mirror"]:
+            n = len(st.get("docker_mirrors") or [])
+            rows.append(("  [*] Docker 镜像源: 已选 %d 个 ▶" % n,
+                         "submenu_dmirror", "docker_mirror", False, 1))
+        else:
+            rows.append(("  [ ] Docker 镜像源 ▶", "submenu_dmirror", "docker_mirror", False, 1))
 
     # ---- 用户 ----
     if is_wsl() or os.geteuid() == 0:
@@ -1416,6 +1606,7 @@ def build_rows(st):
     toggle_row("Locale", "locale")
     toggle_row("时区", "timezone")
     toggle_row("基础软件包", "base")
+    toggle_row("AUR 助手", "aur")
     toggle_row("CPU 微码", "microcode")
 
     # ---- 系统服务 ----
@@ -1423,35 +1614,39 @@ def build_rows(st):
     for key in ("network", "sshd", "chrony", "cronie", "ufw"):
         toggle_row(PACKAGE_ITEMS[key][0], key)
 
-    # ---- 终端美化 ----
-    header("终端美化")
-    toggle_row("Zsh 美化", "zsh")
-    toggle_row("字体 (Nerd/中文)", "fonts")
-    toggle_row("终端提示符 (starship)", "starship")
+    # ---- Shell 与美化 ----
+    header("Shell 与美化")
+    toggle_row("Zsh (设为默认 Shell)", "zsh")
+    if st["zsh"]:
+        toggle_row("Zsh 插件", "zsh_plugins", 1)
+    if st["locked"].get("prompt"):
+        rows.append(("终端提示符: %s (已配置)" % PROMPT_LABEL.get(st.get("prompt"), "未配置"),
+                     "submenu_prompt", "prompt", True, 0))
+    else:
+        rows.append(("终端提示符: %s ▶" % PROMPT_LABEL.get(st.get("prompt"), "未配置"),
+                     "submenu_prompt", "prompt", False, 0))
+    # 字体不再单列菜单项:选了任一提示符后作为依赖自动安装(见 run_fonts)
 
-    # ---- 开发工具 ----
+    # ---- 开发工具 ----（语言在前，工具在后）
     header("开发工具")
-    toggle_row("NeoVim (LazyVim)", "nvim")
-    rows.append((group_summary("langs"), "group", "langs", False, 0))
-    rows.append((group_summary("cpp"), "group", "cpp", False, 0))
-    rows.append((group_summary("git_tools"), "group", "git_tools", False, 0))
-
-    # ---- AUR ----
-    header("AUR")
-    toggle_row("AUR 助手 (yay)", "aur")
-    toggle_row(PACKAGE_ITEMS["paru"][0], "paru")
+    for key in ("python", "lua", "php", "ruby", "java", "node",
+                "rustup", "go", "cpp", "gittools"):
+        toggle_row(PACKAGE_ITEMS[key][0], key)
 
     # ---- CLI 增强 ----
     header("CLI 增强")
-    for key in ("cli", "editor", "file", "sysinfo", "json", "netdiag",
-                "man", "nav", "plocate", "netadd"):
+    toggle_row("终端编辑器", "editor")
+    # LazyVim 配置只在终端编辑器组勾选且选中了 neovim 时才有意义
+    if st.get("editor") and "neovim" in selected_pkgs(st, "editor"):
+        toggle_row("LazyVim (NeoVim 配置)", "nvim", 1)
+    for key in ("cli", "file", "sysinfo", "json", "netdiag"):
         toggle_row(PACKAGE_ITEMS[key][0], key)
 
     # ---- 容器 ----
     header("容器")
     toggle_row("Docker", "docker")
     if st["docker"]:
-        toggle_row("Docker 镜像源", "docker_mirror", 1)
+        dmirror_row()
     toggle_row(PACKAGE_ITEMS["container"][0], "container")
 
     # ---- WSL ----
@@ -1464,8 +1659,9 @@ def build_rows(st):
     rows.append(("  [ 退出 ]", "action", "quit", False, 0))
     return rows
 
+
 def render_main(win, rows, cur, st):
-    win.erase()
+    win.clear()
     try:
         height, width = win.getmaxyx()
     except curses.error:
@@ -1510,13 +1706,20 @@ def render_main(win, rows, cur, st):
         text, kind, key, locked, indent = rows[cur]
         if kind in ("submenu_user", "submenu_mirror"):
             hint = "空格: 进入选择"
-        elif kind == "group":
-            hint = "空格: 批量选择"
+        elif kind == "submenu_prompt":
+            hint = "已配置（如需更换请手动调整）" if locked else "空格: 选择提示符"
+        elif kind == "submenu_dmirror":
+            if locked:
+                hint = "已配置（重跑时将合并写入）"
+            else:
+                hint = "空格: 选择镜像源（全不选=停用）"
         elif kind == "toggle":
             if st["disabled"].get(key):
                 hint = "当前环境不支持，无法选择"
             elif locked:
                 hint = "已配置，空格无效"
+            elif is_multi_pkg(key):
+                hint = "空格: 按包选择（全不选=取消整组）"
             else:
                 hint = "空格: 勾选/取消"
         elif kind == "action":
@@ -1529,7 +1732,7 @@ def render_main(win, rows, cur, st):
                 win.addstr(height - 1 - DETAIL_LINES + j, 0, seg, curses.color_pair(4))
             except curses.error:
                 pass
-    line = "↑↓移动 · 空格勾选/进入/执行 · q退出"
+    line = "↑↓移动 · 空格勾选/进入/选包 · q退出"
     if hint:
         line += "   |   " + hint
     try:
@@ -1549,7 +1752,7 @@ def user_menu(win, st):
         # 创建新用户
         st["create_user"] = True
         st["config_user"] = "root"
-        win.erase()
+        win.clear()
         win.refresh()
         win.addstr(0, 0, "请输入新用户名: ")
         curses.echo()
@@ -1577,7 +1780,7 @@ def user_menu(win, st):
     else:
         st["create_user"] = False
         st["config_user"] = options[sel]
-    detect(st, [])
+    detect(st)
 
 
 def mirror_menu(win, st):
@@ -1596,6 +1799,80 @@ def mirror_menu(win, st):
         st["mirror"] = keys[sel]
 
 
+def pkg_menu(win, st, key):
+    """按包选择子菜单：空格进入，子选择决定整组勾选状态（全不选=未勾选）。
+
+    未勾选的组进入时默认全不选，由用户按需勾选——与全局"默认未选中"一致。
+    覆盖 PACKAGE_ITEMS 与 base/fonts/zsh_plugins 等特殊组。
+    """
+    pkgs = menu_pkgs(key)
+    label = menu_label(key)
+    default_on = st.get(key) is True
+    selmap = st.setdefault("pkgsel", {}).setdefault(key, {p: default_on for p in pkgs})
+    w = max(disp_width(p) for p in pkgs)
+    entries = []
+    for p in pkgs:
+        desc = PKG_DESC.get(p, "")
+        entries.append([(pad_disp(p, w) + "  " + desc).rstrip(), selmap.get(p, default_on)])
+    check_select(win, "%s · 按包选择" % label, entries)
+    for p, e in zip(pkgs, entries):
+        selmap[p] = e[1]
+    st[key] = any(selmap.values())
+
+
+def prompt_menu(win, st):
+    """终端提示符单选子菜单;p10k 是 zsh 专属主题,选中时自动勾选 Zsh。"""
+    opts = [
+        ("p10k",     "Powerlevel10k  zsh 专属主题，功能最全（自动勾选 Zsh，建议同时勾字体）"),
+        ("starship", "starship       跨 Shell 提示符，轻量易配，bash 也可用"),
+        ("",         "不配置"),
+    ]
+    cur = {"p10k": 0, "starship": 1, "": 2}[st.get("prompt", "") or ""]
+    sel = radio_select(win, "终端提示符", [o[1] for o in opts], cur)
+    if sel is None:
+        return
+    st["prompt"] = opts[sel][0]
+    # p10k 必须依附 zsh;starship 独立可用
+    if st["prompt"] == "p10k":
+        st["zsh"] = True
+        cascade(st, "zsh")      # 与手动勾选 Zsh 一致:插件默认全选
+
+
+def docker_mirror_menu(win, st):
+    """Docker 镜像源多选子菜单：空格进入，子选择决定该项开关（全不选=停用）。"""
+    sel = set(st.get("docker_mirrors") or [])
+    wl = max(disp_width(label) for _k, label, _u, _n in DOCKER_MIRRORS)
+    wu = max(disp_width(url) for _k, _l, url, _n in DOCKER_MIRRORS)
+    entries = []
+    for k, label, url, note in DOCKER_MIRRORS:
+        text = pad_disp(label, wl) + "  " + pad_disp(url, wu) + "  " + note
+        entries.append([text.rstrip(), k in sel])
+    check_select(win, "Docker 镜像源 · 多选", entries)
+    st["docker_mirrors"] = [m[0] for m, e in zip(DOCKER_MIRRORS, entries) if e[1]]
+    st["docker_mirror"] = bool(st["docker_mirrors"])
+
+
+def cascade(st, key):
+    """某项状态变化后的级联:取消父项时收掉依附它的子项,开启时给出合理默认。"""
+    if key == "zsh":
+        if st["zsh"]:
+            # 勾选 Zsh 默认带上全部插件(曾显式全不选过则重置为全选)
+            if not st["zsh_plugins"]:
+                st["zsh_plugins"] = True
+                selmap = st.get("pkgsel", {}).get("zsh_plugins")
+                if selmap is not None and not any(selmap.values()):
+                    st["pkgsel"]["zsh_plugins"] = {p: True for p in menu_pkgs("zsh_plugins")}
+        else:
+            st["zsh_plugins"] = False
+            if st.get("prompt") == "p10k":     # p10k 无法脱离 zsh;starship 独立保留
+                st["prompt"] = ""
+    if key == "docker" and not st["docker"]:
+        st["docker_mirror"] = False
+    if key == "editor" and (not st.get("editor")
+                            or "neovim" not in selected_pkgs(st, "editor")):
+        st["nvim"] = False                 # LazyVim 配置依附 neovim
+
+
 def main_menu(win, st):
     curses.start_color()
     try:
@@ -1612,6 +1889,20 @@ def main_menu(win, st):
     rows = build_rows(st)
     cur = 0
     n = len(rows)
+
+    def refresh():
+        return build_rows(st)
+
+    def try_run():
+        """点击 [执行]：新用户未命名时先弹输入，返回 False 需要刷新菜单。"""
+        if st["create_user"] and not st["new_username"]:
+            win.addstr(0, 0, "请先设置新用户用户名", curses.color_pair(2))
+            win.refresh()
+            win.getch()
+            user_menu(win, st)
+            return False
+        return True
+
     while True:
         render_main(win, rows, cur, st)
         k = read_key(win)
@@ -1625,38 +1916,40 @@ def main_menu(win, st):
             cur = (cur + 1) % n
             while rows[cur][1] in ("sep", "header"):
                 cur = (cur + 1) % n
-        elif k == "space":
+        elif k in ("space", "enter"):
             text, kind, key, locked, indent = rows[cur]
             if kind == "toggle" and not locked:
-                st[key] = not st[key]
-                if key == "docker" and not st["docker"]:
-                    st["docker_mirror"] = False
-                rows = build_rows(st)
-                n = len(rows)
+                if is_multi_pkg(key):
+                    # 多包组：空格进入按包选择，整组勾选状态由子选择决定
+                    # (未勾选组的 selected_pkgs 默认全选,须先看组开关再判断"曾选中")
+                    had_neovim = (key == "editor" and st.get("editor")
+                                  and "neovim" in selected_pkgs(st, "editor"))
+                    pkg_menu(win, st, key)
+                    # 新选中 neovim 时默认带上 LazyVim 配置(可再手动取消)
+                    if key == "editor" and not had_neovim \
+                            and "neovim" in selected_pkgs(st, "editor"):
+                        st["nvim"] = True
+                else:
+                    st[key] = not st[key]
+                cascade(st, key)
+                rows = refresh(); n = len(rows)
+            elif kind == "submenu_dmirror" and not locked:
+                docker_mirror_menu(win, st)
+                rows = refresh(); n = len(rows)
+            elif kind == "submenu_prompt" and not locked:
+                prompt_menu(win, st)
+                rows = refresh(); n = len(rows)
             elif kind == "submenu_user":
                 user_menu(win, st)
-                rows = build_rows(st)
-                n = len(rows)
+                rows = refresh(); n = len(rows)
             elif kind == "submenu_mirror":
                 mirror_menu(win, st)
-                rows = build_rows(st)
-                n = len(rows)
-            elif kind == "group":
-                grp = GROUPS[key]
-                multi_select(win, grp["label"], grp["keys"], st)
-                rows = build_rows(st)
-                n = len(rows)
+                rows = refresh(); n = len(rows)
             elif kind == "action":
                 if key == "run":
-                    if st["create_user"] and not st["new_username"]:
-                        win.addstr(0, 0, "请先设置新用户用户名", curses.color_pair(2))
-                        win.refresh()
-                        win.getch()
-                        user_menu(win, st)
-                        rows = build_rows(st)
-                        n = len(rows)
-                    else:
+                    if try_run():
                         return st
+                    rows = refresh(); n = len(rows)
                 else:
                     return None
 
@@ -1671,99 +1964,123 @@ def resolve_target(st):
 #  主流程
 # ---------------------------------------------------------------------------
 
+def sweep_owner(st):
+    """最终兜底：把目标用户家目录中脚本触碰过的路径属主修正为该用户。
+
+    各步骤内部已有 chown 修正，但任一步骤在"写入"与"修正"之间被打断，
+    就会残留 root 属主文件，用户此后改不了自己的配置（.zshrc/.p10k.zsh
+    等）。无论成败，execute 退出前都执行一次兜底清扫。
+    """
+    t = st.get("target_user", "root")
+    if t == "root" or not user_exists(t):
+        return
+    home = user_home(t)
+    uid = pwd.getpwnam(t).pw_uid
+    try:
+        if os.stat(home).st_uid != uid:
+            # 家目录本身属主不对（如手动建用户后 root 复制过文件），整树修正
+            chown_r(home, t)
+    except OSError:
+        pass
+    # 脚本写入/创建的具体路径（chown_r 对不存在的路径是 no-op）
+    for rel in (".zsh", ".zshrc", ".zsh_history", ".p10k.zsh",
+                ".config", ".local", ".cache"):
+        chown_r(os.path.join(home, rel), t)
+    ok("已确认 %s 家目录属主为 %s" % (home, t))
+
+
+# ---------------------------------------------------------------------------
+#  主流程
+# ---------------------------------------------------------------------------
+
 def execute(st):
-    now, reboot, failures = [], [], []
+    reboot, failures = [], []
     target = resolve_target(st)
     st["target_user"] = target
     info("开始执行 (目标用户: %s, 家目录: %s)" % (target, user_home(target)))
 
     try:
-        if st["create_user"]:
-            run_create_user(st, now, reboot, failures)
-        run_mirror(st, now, reboot, failures)
-        if st["timezone"]:
-            run_timezone(st, now, reboot, failures)
-        if st["locale"]:
-            run_locale(st, now, reboot, failures)
-        if st["base"]:
-            run_base(st, now, reboot, failures)
-        if st["microcode"]:
-            run_microcode(st, now, reboot, failures)
-        # 系统服务
-        for key in ("network", "sshd", "chrony", "cronie"):
-            if st[key]:
-                run_service(st, key, now, reboot, failures)
-        if st["ufw"]:
-            run_ufw(st, now, reboot, failures)
-        # 终端美化
-        if st["zsh"]:
-            run_zsh(st, now, reboot, failures)
-        if st["fonts"]:
-            run_fonts(st, now, reboot, failures)
-        if st["starship"]:
-            run_pkgs(st, "starship", now, reboot, failures)
-        # 开发工具
-        if st["nvim"]:
-            run_nvim(st, now, reboot, failures)
-        for key in ("python", "rustup", "go", "java", "node", "lua", "php", "ruby",
-                    "clang", "valgrind"):
-            if st[key]:
-                run_pkgs(st, key, now, reboot, failures)
-        # Git 工具
-        for key in ("git", "lazygit", "gitx"):
-            if st[key]:
-                run_pkgs(st, key, now, reboot, failures)
-        # AUR
-        if st["aur"]:
-            run_aur(st, now, reboot, failures)
-        if st["paru"]:
-            run_pkgs(st, "paru", now, reboot, failures)
-        # CLI 增强
-        for key in ("cli", "editor", "file", "sysinfo", "json", "netdiag",
-                    "man", "nav", "plocate", "netadd"):
-            if st[key]:
-                run_pkgs(st, key, now, reboot, failures)
-        # 容器
-        if st["docker"]:
-            run_docker(st, now, reboot, failures)
-        if st["docker_mirror"]:
-            run_docker_mirror(st, now, reboot, failures)
-        if st["container"]:
-            run_pkgs(st, "container", now, reboot, failures)
-        # WSL
-        if st["wsl_systemd"]:
-            run_wsl_systemd(st, now, reboot, failures)
-        apply_wsl_default(st, now, reboot, failures)
-    except KeyboardInterrupt:
-        print()
-        err("被用户中断")
-        return
+        try:
+            if st["create_user"]:
+                run_create_user(st, reboot, failures)
+            run_mirror(st, reboot, failures)
+            if st["timezone"]:
+                run_timezone(st, reboot, failures)
+            if st["locale"]:
+                run_locale(st, reboot, failures)
+            if st["base"]:
+                run_base(st, reboot, failures)
+            # sudo/wheel 必须等 base 装好 sudo 之后（全新系统 /etc/sudoers 不存在）
+            ensure_user_sudo(st, failures)
+            if st["aur"]:
+                run_pkgs(st, "aur", reboot, failures)
+            if st["microcode"]:
+                run_microcode(st, reboot, failures)
+            # 系统服务
+            for key in ("network", "sshd", "chrony", "cronie"):
+                if st[key]:
+                    run_service(st, key, reboot, failures)
+            if st["ufw"]:
+                run_ufw(st, reboot, failures)
+            # Shell 与美化
+            if st["zsh"]:
+                run_zsh(st, reboot, failures)
+            if st.get("prompt") == "starship" and not st["zsh"]:
+                info("安装 starship（未选 Zsh：仅安装包，bash 用户自行在 ~/.bashrc 添加 eval）…")
+                if not pacman_S("starship"):
+                    failures.append("starship 安装失败，请手动执行: pacman -S starship")
+            if st.get("prompt"):
+                run_fonts(st, reboot, failures)   # 字体作为提示符依赖自动安装
+            # 开发工具
+            for key in ("python", "lua", "php", "ruby", "java", "node",
+                        "rustup", "go", "cpp", "gittools"):
+                if st[key]:
+                    run_pkgs(st, key, reboot, failures)
+            # CLI 增强
+            for key in ("editor", "cli", "file", "sysinfo", "json", "netdiag"):
+                if st[key]:
+                    run_pkgs(st, key, reboot, failures)
+            if st["nvim"]:
+                run_nvim(st, reboot, failures)
+            # 容器
+            if st["docker"]:
+                run_docker(st, reboot, failures)
+            if st["docker_mirror"]:
+                run_docker_mirror(st, reboot, failures)
+            if st["container"]:
+                run_pkgs(st, "container", reboot, failures)
+            # WSL
+            if st["wsl_systemd"]:
+                run_wsl_systemd(st, reboot, failures)
+            apply_wsl_default(st, reboot, failures)
+        except KeyboardInterrupt:
+            print()
+            err("被用户中断")
+            return
+    finally:
+        sweep_owner(st)
 
     print("\n\033[1;36m========================================\033[0m")
     print("\033[1;36m初始化配置全部完成！\033[0m")
     print("\033[1;36m========================================\033[0m")
     print("目标用户: %s" % target)
     print("家目录  : %s" % user_home(target))
-    if st["create_user"]:
-        print("请使用: su - %s   切换到新用户" % target)
-    elif target == "root":
+    if target == "root" and not st["create_user"]:
         print("本次未创建普通用户，用户级配置已写入 root (/root)")
 
     if failures:
         print("\n\033[1;31m执行失败项汇总（脚本已继续，请复查后手动补装/修复）\033[0m")
         for i, f in enumerate(failures, 1):
             print("\033[0;31m%d. %s\033[0m" % (i, f))
-    if now:
-        print("\n\033[1;33m需立即处理（请现在执行）\033[0m")
-        for i, f in enumerate(now, 1):
-            print("\033[1;33m%d. %s\033[0m" % (i, f))
     if reboot:
-        print("\n\033[0;36m重启/重连后自动生效（无需操作，仅供知晓）\033[0m")
+        print("\n\033[0;36m重启后自动生效（无需操作，仅供知晓）\033[0m")
         for i, f in enumerate(reboot, 1):
             print("\033[0;36m%d. %s\033[0m" % (i, f))
     print()
-    if st["zsh"]:
-        print("建议重启终端或执行 'exec zsh' 以加载新配置")
+    if is_wsl():
+        print("\033[1;36m建议在 Windows 执行 wsl --shutdown 后重新打开终端，使全部配置生效\033[0m")
+    else:
+        print("\033[1;36m建议重启系统（或注销重新登录），使全部配置生效\033[0m")
 
 
 def default_state():
@@ -1772,18 +2089,21 @@ def default_state():
         "new_username": "",
         "config_user": "root",
         "mirror": "official",
-        "base": False,
+        "base": True,                # 基础软件包默认全选
+        "aur": False,
         "docker": False,
         "docker_mirror": False,
-        "locale": False,
-        "timezone": False,
+        "docker_mirrors": [],
+        "dmirror_extra": [],
+        "pkgsel": {},
+        "locale": True,             # 幂等无害、中文环境必需,默认勾选
+        "timezone": True,           # 中国环境零交互自动设 Asia/Shanghai
         "microcode": False,
         "zsh": False,
-        "fonts": False,
+        "zsh_plugins": False,
+        "prompt": "",
         "nvim": False,
-        "aur": False,
-        "paru": False,
-        "wsl_systemd": False,
+        "wsl_systemd": True,        # docker/sshd/cronie 等服务的前提,默认勾选
         "wsl_default": False,
         "network": False,
         "sshd": False,
@@ -1791,29 +2111,21 @@ def default_state():
         "cronie": False,
         "ufw": False,
         "python": False,
-        "rustup": False,
-        "go": False,
-        "java": False,
-        "node": False,
         "lua": False,
         "php": False,
         "ruby": False,
-        "clang": False,
-        "valgrind": False,
-        "git": False,
-        "lazygit": False,
-        "gitx": False,
+        "java": False,
+        "node": False,
+        "rustup": False,
+        "go": False,
+        "cpp": False,
+        "gittools": False,
         "cli": False,
         "editor": False,
         "file": False,
         "sysinfo": False,
         "json": False,
         "netdiag": False,
-        "starship": False,
-        "man": False,
-         "nav": False,
-         "plocate": False,
-        "netadd": False,
         "container": False,
         "locked": {},
         "disabled": {},
@@ -1837,7 +2149,7 @@ def main():
                 return
 
         st["target_user"] = "root"
-        detect(st, [])
+        detect(st)
 
         result = curses.wrapper(lambda w: main_menu(w, st))
         if result is None:

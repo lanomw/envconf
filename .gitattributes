@@ -1,0 +1,4 @@
+# 统一 LF 换行:任何平台 checkout 都得到 Linux 换行
+# (arch-setup.py 的 shell 引导层若变 CRLF,直接 ./执行 会因 shebang 带 \r 失败;
+#  Makefile 的 Tab 缩进同样要求 LF。Windows 编辑器均可正常处理 LF。)
+* text=auto eol=lf

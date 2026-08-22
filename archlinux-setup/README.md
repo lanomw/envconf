@@ -4,23 +4,28 @@
 
 ## 特性
 
- - 菜单化交互（menuconfig 风格，单列表+分组标题）：`↑↓` 移动 / `空格` 勾选或进入子菜单 / `回车` 进入子项或执行 / `q` 退出，列表过长自动滚动；方向键移动时改用 `erase()` 刷新，减缓 Windows Terminal 下全屏闪烁
+- 菜单化交互（menuconfig 风格，单列表+分组标题）：`↑↓` 移动 / `空格` 勾选、进入子菜单或执行（`回车` 同 `空格`）/ `q` 退出，列表过长自动滚动
+- **按包选择**：多包组（基础软件包、终端编辑器、Node.js、Git 工具、Podman/K8s 等）行尾带 `▶` 与 `(已选/总数)` 计数，`空格` 进入子菜单逐包勾选，`a` 全选/全不选；**整组勾选状态由子选择决定，全不选即整组取消**。除锁定项与基础软件包（默认全选）外，其余软件默认未选中，未勾选的组进入子菜单时同样默认全不选
+- 子菜单内每个包附一行关键说明（众所周知的不写）
 - **详情栏**：菜单底部实时显示当前高亮项**到底会装哪些包 / 改哪些文件**，不必靠"基础软件包"这样的名字猜内容。按显示列宽折行，中英混排不会错位
-- 菜单即确认：勾选完成后回车 `[执行]` 即可，**无独立确认表**
- - **分组菜单 + 批量多选**：`系统基础 / 系统服务 / 终端美化 / 开发工具 / CLI 增强 / 容器 / WSL`；开发工具下“编程语言 / C/C++ 工具 / Git 工具”折叠为父级行，按 `空格` 进入多选子菜单批量勾选，父级实时显示“已选 X/Y”
-- 子项随父项展开：勾选 **Docker** 后自动出现 **Docker 镜像源** 子选项
+- 菜单即确认：勾选完成后 `空格` 触发 `[执行]` 即可，**无独立确认表**
+- **分组菜单**：`系统基础 / 系统服务 / Shell 与美化 / 开发工具 / CLI 增强 / 容器 / WSL`，一目了然
+- 子项随父项展开：勾选 **Docker** 后自动出现 **Docker 镜像源** 子选项（多选镜像源，候选表内自选）
 - **预检测锁定**：已安装的软件 / 已启用的服务 / 已配置的用户级项自动勾选并锁定，**空格无效不可取消**，避免重复配置
-- **软件清单可扩展**：除基础项外，内置 开发语言/Java/Node/脚本语言/C++/git/lazygit/CLI 工具/容器 等 20+ 可选软件项
-- **systemd 服务项**（NetworkManager / sshd / chrony / cronie）：勾选后原生 Arch 自动 `systemctl enable --now`；WSL 下跳过并记入"重启后自动生效"
+- **环境自适配**：WSL 下自动禁用不适用的项（CPU 微码、NetworkManager、chrony 时间同步、ufw 防火墙——均由 Windows 宿主管理），显示 `[-]` 与原因，不可勾选
+- **时区自动判定且默认勾选**：选了国内镜像源或 IP 地理探测为中国大陆时，自动设 `Asia/Shanghai`，不再要求手动确认（其它地区才交互输入）；Locale 同为默认勾选，二者幂等无害、已配置自动锁定
+- **Shell 与美化解耦**：Zsh 本体（默认 Shell）、Zsh 插件（自动建议/语法高亮）、终端提示符（单选：Powerlevel10k / starship / 不配置）三项独立；p10k 与 starship 互斥生成配置，选 p10k 自动勾选 Zsh，取消 Zsh 自动级联
+- **软件清单可扩展**：除基础项外，内置 Python/Lua/PHP/Ruby/Java/Node.js/Rust/Go/C++/Git 工具/CLI 工具/容器 等 20+ 可选软件项；所有包名均取自官方仓库，`yay`/`paru` 仅 archlinuxcn 提供的包会在选中时**自动启用 archlinuxcn 仓库**
+- **systemd 服务项**（sshd / cronie）：勾选后原生 Arch 自动 `systemctl enable --now`；WSL 下勾选了 WSL systemd 时自动 `systemctl enable`，重启后随 systemd 自启
 - **reflector**（镜像自动优选）与手动镜像源二选一，并入镜像源单选子菜单
 - 支持原生 Arch 与 WSL Arch
 - 不创建新用户时，可指定已有用户；默认目标为 **root**（配置写入 `/root`）
 - 创建新用户时，Zsh / NeoVim 等用户级配置统一落到新用户家目录
-- 仅配置目标用户的 Zsh/NeoVim 等用户级环境；目标为 root 时配置写入 `/root`（默认情况），不会在配置普通用户时顺带改动 root
-- WSL 下创建新用户时，**默认不**将新用户设为 WSL 默认登录用户（多用户场景更安全）
+- **sudo 保障**：无论新建用户还是已有用户，脚本都会确保其在 `wheel` 组且 sudoers 放行（全新系统上会先装 sudo 再写配置，旧版此处存在 sudo 不可用的 bug）
+- **属主兜底清扫**：执行结束前统一把目标用户家目录中脚本触碰过的路径属主修正为该用户，杜绝残留 root 属主文件导致用户改不了自己的配置（如 `.zshrc`/`.p10k.zsh`）
 - 关键步骤失败（如用户创建、源同步）会中止并给出提示；非关键步骤失败则记录到末尾失败汇总
-- 结束时汇总三类提示：**需立即处理 / 重启后自动生效（无需操作）/ 失败项**，无需翻阅执行记录
-- 中途失败后可安全重跑：已存在用户会跳过创建，镜像为多源回退，Zsh/NeoVim 已配置则跳过覆盖
+- 结束时汇总：**失败项** 与 **重启后自动生效** 两类提示，并附一句统一的重启建议；不再输出"需立即处理"类提示（此类事项重启后均自动解决）
+- 中途失败后可安全重跑：已存在用户会跳过创建，镜像为多源回退，Zsh/NeoVim 已配置则跳过覆盖，daemon.json 合并写入不丢自定义键
 - 多用户复用同一环境时：已配置的**镜像源 / locale 自动跳过**，不会重复改写
 
 ## 使用方法
@@ -79,27 +84,30 @@ sudo sh arch-setup.py
 
 1. **stage 0 引导层**（sh）：CRLF 自愈、Arch 检测、root、TERM、时钟、镜像源、keyring、安装 python（详见上方"使用方法"）
 2. **前置校验**（Python）：root 检测、`/etc/arch-release` 检测、WSL 检测
-3. **菜单选择**（menuconfig 风格，分组菜单，选择即时生效，菜单即确认）：
-   - **目标用户**：`空格` 或 `回车` 进入子菜单，选择 *创建新用户* 或 *配置已有用户*
-   - **镜像源**：`空格` 或 `回车` 进入单选子菜单（官方 / 清华 / 中科大 / 阿里 / 腾讯 / 华为 / **自动优选(reflector)**）
-    - 其余各项按分组 `空格` 勾选；带有 `▶` / `>` 的父级行按 `空格` 进入批量多选子菜单（编程语言 / C/C++ 工具 / Git 工具）；勾选 **Docker** 后自动展开 **Docker 镜像源** 子选项
-   - 底部详情栏（绿色两行）：当前高亮项会装哪些包、启用哪个服务、改哪个配置文件。例如高亮"基础软件包"时显示 `安装: sudo git base-devel make cmake vim neovim tree curl wget openssh man-db man-pages which less unzip`
-   - 底部提示栏：动态操作提示（如"空格/回车: 进入选择"）与固定图例同行显示
-4. **执行阶段**：回车 `[执行]` 触发，按菜单顺序依次执行所选各项
+3. **菜单选择**（menuconfig 风格，分组菜单，选择即时生效，菜单即确认；`空格` 为主操作键，`回车` 等效）：
+   - **目标用户**：`空格` 进入子菜单，选择 *创建新用户* 或 *配置已有用户*
+   - **镜像源**：`空格` 进入单选子菜单（官方 / 清华 / 中科大 / 阿里 / 腾讯 / 华为 / **自动优选(reflector)**）
+   - **多包组**（行尾带 `▶`）：`空格` 进入"按包选择"子菜单（`空格` 勾/消、`a` 全选/全不选、`esc` 返回），全不选即整组取消；未勾选的组进入时默认全不选（基础软件包默认全选）
+   - **单包项**：`空格` 勾选/取消
+   - **终端提示符**：`空格` 进入单选子菜单（Powerlevel10k / starship / 不配置），选 p10k 自动勾选 Zsh
+   - **Zsh 插件 / LazyVim / Docker 镜像源**：依附父项的缩进子项，父项勾选后才出现，取消父项自动级联
+   - 底部详情栏（绿色两行）：当前高亮项会装哪些包、启用哪个服务、改哪个配置文件。例如高亮"基础软件包"时显示 `安装: sudo git base-devel make cmake vim tree curl wget openssh man-db man-pages which less unzip  ·  空格: 按包选择`
+   - 底部提示栏：动态操作提示（如"空格: 按包选择（全不选=取消整组）"）与固定图例同行显示
+4. **执行阶段**：`空格` 触发 `[执行]`，按菜单顺序依次执行所选各项
 
 ## 软件清单（分组）
 
 | 分组 | 可选项目 |
 |------|----------|
-| **系统基础** | 镜像源、Locale、时区、基础软件包、CPU 微码 |
-| **系统服务** | 网络工具(NetworkManager)、SSH 服务端(sshd)、NTP 时间同步(chrony)、定时任务(cronie)、防火墙(ufw) |
-| **终端美化** | Zsh 美化、字体(Nerd/中文)、终端提示符(starship) |
- | **开发工具** | NeoVim(LazyVim)；**编程语言**（python/rustup/go/Java/Node/lua/php/ruby，批量多选）；**C/C++ 工具**（clang、valgrind，独立可选）；**Git 工具**（git-delta/lazygit/git-lfs/git-open，批量多选）；AUR 助手（yay/paru） |
- | **CLI 增强** | 终端工具(tmux/btop/eza/bat/zoxide/fd/ripgrep)、终端编辑器(helix/micro)、文件管理(yazi)、系统信息+磁盘(fastfetch/duf/ncdu)、JSON工具(jq/yq)、网络诊断(nmap/ncat/mosh/httpie/iperf3)、速查手册(tldr/cheat)、目录导航(broot/direnv)、文件索引(plocate)、网络补充(mtr/whois) |
-| **容器** | Docker、Docker镜像源(子项)、Podman/K8s(podman/kubectl/k9s/helm) |
-| **WSL** | WSL systemd |
+| **系统基础** | 镜像源、Locale（默认勾选）、时区（默认勾选，中国环境自动）、基础软件包（17 包，默认全选、可按包取消）、AUR 助手(yay/paru，可按包选)、CPU 微码 |
+| **系统服务** | 网络工具(NetworkManager，WSL 禁用)、SSH 服务端(sshd)、NTP 时间同步(chrony，WSL 禁用)、定时任务(cronie)、防火墙(ufw，WSL 禁用) |
+| **Shell 与美化** | Zsh(设为默认 Shell；勾选后 Zsh 插件自动全选)、Zsh 插件(自动建议/语法高亮)、终端提示符(单选: Powerlevel10k / starship / 不配置；选中后字体作为依赖自动安装) |
+| **开发工具** | Python、Lua、PHP、Ruby、Java(jdk-openjdk)、Node.js(nodejs/npm/pnpm，可按包选)、Rust(rustup)、Go、C/C++ 工具链(gcc/clang/valgrind，可按包选)、Git 工具(git-delta/lazygit/git-lfs，可按包选) |
+| **CLI 增强** | 终端编辑器(neovim/helix/micro，可按包选) + LazyVim 配置子项(勾选 neovim 后自动勾选)、终端工具(tmux/btop/eza/bat/zoxide/fd/ripgrep/fzf/tldr，可按包选)、文件管理(yazi/broot/plocate/direnv，可按包选)、系统信息+磁盘(fastfetch/duf/ncdu)、JSON/YAML 工具(jq/go-yq)、网络诊断(nmap/mosh/httpie/iperf3/mtr/whois，可按包选) |
+| **容器** | Docker、Docker 镜像源(子项，多选)、Podman/K8s(podman/kubectl/k9s/helm，可按包选) |
+| **WSL** | WSL systemd（默认勾选，docker/sshd/cronie 的前提） |
 
-> 部分软件（如 `bun`/`deno`/`paru` 等）可能位于 AUR 而非官方仓库：安装失败会记入末尾失败汇总，不中断流程。
+> 标注"可按包选"的多包组可 `空格` 进入子菜单逐包勾选。所有包名均取自**官方仓库**（core/extra）；`yay`/`paru` 仅 archlinuxcn 仓库提供，选中时脚本自动启用 archlinuxcn（官方 cn 源 `repo.archlinuxcn.org`）。个别包安装失败时脚本会逐包重试定位坏包名，记入失败汇总，不中断流程、不拖垮整组。
 
 ## 目标用户说明
 
@@ -125,12 +133,12 @@ sudo sh arch-setup.py
 - 用户名校验：`^[a-z_][a-z0-9_-]{0,31}$`
 - `useradd -m -G wheel -s /bin/bash <name>`
 - 交互式 `passwd` 设置密码
-- 优先写入 `/etc/sudoers.d/99-wheel` 启用 wheel 组 sudo
+- **sudo 保障**（新建与已有用户均执行，在基础软件包装好之后）：确保 sudo 已安装 → `usermod -aG wheel` → 写入 `/etc/sudoers.d/99-wheel` 启用 wheel 组 sudo → 校验用户确在 wheel 组。全新系统上 `/etc/sudoers` 尚不存在，脚本会先装 sudo 再写配置（旧版在装 sudo 之前写配置导致静默落空、新用户无法 sudo）
 - WSL 下若选择设为默认登录用户，写入 `/etc/wsl.conf` 的 `[user] default=<name>`，重启 WSL 后自动生效（无需手动操作）
 
 ### 镜像源
 
-在菜单中通过 `回车` 进入单选子菜单选择。
+在菜单中通过 `空格` 进入单选子菜单选择。
 
 | 选择 | 行为 |
 |------|------|
@@ -155,30 +163,17 @@ sudo sh arch-setup.py
 | 防火墙 | `ufw` | `ufw` |
 
 - **原生 Arch**：装包后自动 `systemctl enable --now <服务>`（防火墙额外执行 `ufw allow OpenSSH` + `ufw --force enable`）
-- **WSL**：跳过 `systemctl enable`，记入"重启后自动生效"汇总（WSL 下 systemd 不可用时）
+- **WSL**：`NetworkManager`、`chrony`、`ufw` 自动禁用（网络/时间/防火墙均由 Windows 宿主管理，菜单显示 `[-]` 及原因）；sshd/cronie 勾选了 WSL systemd 时自动 `systemctl enable`，重启后随 systemd 自启，未启用 systemd 则提示
 - 服务项默认关闭，勾选才启用；服务已启用则**预检测锁定**
-- **WSL 特殊处理**：`chrony`（NTP）在 WSL 中由 Windows 宿主同步时间，菜单中自动禁用，无需配置
 
 ### 开发工具 / CLI 增强
 
 这些分组为**纯软件包**项，勾选即 `pacman -S --needed` 安装（已装则跳过），失败记入末尾失败汇总，不中断流程。包清单见上方"软件清单"分组表。
 
-开发工具内进一步分为三类折叠批量多选：
+### 时区 / CPU 微码
 
-| 分组 | 进入方式 | 说明 |
-|------|---------|------|
-| **编程语言** | 父级行 `空格/回车` | Python / Rust / Go / Java / Node(bun/deno) / Lua / PHP / Ruby，可独立勾选；底部详情栏会说明每个语言的作用 |
-| **C/C++ 工具** | 父级行 `空格/回车` | `clang`（编译器）与 `valgrind`（内存/性能分析）**独立可选**，无强制捆绑 |
-| **Git 工具** | 父级行 `空格/回车` | `git-delta`（diff 高亮）、`lazygit`（TUI）、`git-lfs`/`git-open`（扩展）均为 Git 增强，但不互斥，可按需多选 |
-
-菜单底部详情栏会显示当前高亮项的作用与即将安装的包名，降低"只看分类名不知道用途"的问题。
-
- ### 时区 / CPU 微码 / Shell 与终端提示符
-
-- **时区**（系统基础组）：交互输入时区（默认 `Asia/Shanghai`），符号链接 `/etc/localtime`；原生 Arch 与 WSL 均生效。`/etc/localtime` 已是符号链接则预检测锁定。
- - **CPU 微码**（系统基础组）：按 `/proc/cpuinfo` 自动识别 Intel→`intel-ucode` / AMD→`amd-ucode` 并安装；WSL 下跳过记入"重启后自动生效"。
- - **Zsh 美化**（终端美化组）：安装并配置 Zsh + 插件 + 主题；仅作用于目标用户。注意：**Zsh 是 Shell，starship 是提示符**，二者不是互斥的替代关系；启用 Zsh 后仍可选择 starship 作为提示符，脚本生成的 `~/.zshrc` 会自动 `eval "$(starship init zsh)"`。本脚本未使用 zim，而是直接克隆 powerlevel10k 等三个插件。
- - **终端提示符 starship**（终端美化组）：安装 `starship`；不依赖 Zsh，但搭配 Zsh 使用会自动初始化。
+- **时区**（系统基础组，默认勾选）：**中国大陆环境自动设 `Asia/Shanghai`，不要求确认**——判定依据：所选镜像源为国内源（最强信号），或 best-effort IP 地理探测（`curl -m 3 ipinfo.io/country`，失败静默；会把 IP 暴露给第三方，介意可删）。非中国环境才交互输入。符号链接 `/etc/localtime`；原生 Arch 与 WSL 均生效，已是符号链接则预检测锁定。
+- **CPU 微码**（系统基础组）：按 `/proc/cpuinfo` 自动识别 Intel→`intel-ucode` / AMD→`amd-ucode` 并安装；WSL 下跳过记入"重启后自动生效"。
 
 ### 中途失败后再执行
 
@@ -190,72 +185,88 @@ sudo sh arch-setup.py
 | 镜像 | 官方源仍不改文件；国内源若已含所选源则跳过重写，否则重写多源列表 |
 | Locale | 已启用 `en_US`/`zh_CN` 则跳过重新生成 |
 | 基础软件 | `pacman --needed`，已装则跳过 |
-| Zsh | 已克隆的插件目录跳过；含本脚本标识的 `.zshrc` 跳过覆盖（先备份原配置） |
+| Zsh | 已克隆的插件目录跳过；含本脚本标识（新版"arch-setup"或旧版"美化版"）的 `.zshrc` 跳过覆盖 |
 | NeoVim | 若已有 `init.lua` + `lua/` 则跳过克隆，不反复备份覆盖 |
+| Docker 镜像源 | 合并写入：读回现有 `registry-mirrors`，仅在选择变化时改写，其余键保留 |
+
+> 追加安装软件（如后来想加 php、yay）直接重跑并勾选新项即可：已配置项自动锁定跳过、`pacman --needed` 不重装。本脚本定位为**初始配置工具**，不是增量配置管理器。
 
 ### 基础软件包
 
-- 包列表：`git base-devel make cmake vim neovim tree curl wget openssh man-db man-pages which less unzip`，选 Zsh 时附加 `zsh zsh-completions`（Docker 为独立勾选项，见 Docker 章节）
+- 包列表（17 个，**默认全选**，可 `空格` 进入逐包取消）：`sudo git base-devel make cmake vim tree curl wget openssh man-db man-pages which less unzip zip rsync`
+- `neovim` 不在基础包里——由 CLI 增强的"终端编辑器"组/LazyVim 依赖自装，避免两处管理
 
 非 root 运行会自动 `sudo` 重跑。WSL 默认登录用户**只在全部步骤成功后**才写入，避免中途失败卡在新用户。回到 root：`wsl -u root` 或先 `exit`。
 
 ### Docker
 
 - 独立勾选项；勾选后安装 `docker docker-compose docker-buildx`（已装则跳过）
-- 目标用户（非 root）自动加入 docker 组（成功后提示）；**需重新登录或 `newgrp docker` 后才免 sudo 使用 docker**
+- 目标用户（非 root）自动加入 docker 组，重启/重新登录后即可免 sudo 使用 docker
 - **原生 Arch**：`systemctl enable docker`，失败时记录到末尾失败汇总
-- **WSL**：跳过 `systemctl enable`，记录失败原因提示，引导使用 Docker Desktop WSL 集成或手动启动 `dockerd`
+- **WSL**：勾选了 WSL systemd 时自动 `systemctl enable docker`（重启后随 systemd 自启）；未启用 systemd 则提示手动启动 `dockerd` 或改用 Docker Desktop WSL 集成
 
 ### Docker 镜像源
 
-- 仅在勾选 **Docker** 后作为子项展开
-- 勾选后写入 `/etc/docker/daemon.json`（原文件备份为 `daemon.json.bak.<时间戳>`）
-- `registry-mirrors` 多源回退（已登记你提供的 `https://docker.1ms.run`）：
-  - `https://docker.1ms.run`
-  - `https://docker.mirrors.ustc.edu.cn`
-  - `https://hub-mirror.c.163.com`
-  - `https://mirror.baidubce.com`
-- 原生 Arch 下 `systemctl restart docker` 使其生效；WSL/无 systemd 下由 dockerd 启动时自动读取
+- 仅在勾选 **Docker** 后作为子项展开；`空格` 进入多选子菜单，**全不选=停用**，默认未选中
+- 候选表（多选，按选择顺序写入，表首三个为推荐组合；163/百度源已停服故不列入；镜像源可用性随时间变化，可自行修改脚本中的 `DOCKER_MIRRORS` 表）：
 
-### Zsh 美化
+  | 标签 | 地址 | 备注 |
+  |------|------|------|
+  | 毫秒镜像 | `https://docker.1ms.run` | 速度快，推荐 |
+  | DaoCloud | `https://docker.m.daocloud.io` | 老牌稳定 |
+  | 1Panel | `https://docker.1panel.live` | |
+  | 轩辕镜像 | `https://docker.xuanyuan.me` | 免费，速度快 |
+  | 中科大 | `https://docker.mirrors.ustc.edu.cn` | 限校内 |
 
-- 安装 `zsh zsh-completions`（若未装）
-- 将 `/bin/zsh` 写入 `/etc/shells`（若缺）
-- 克隆三个插件到目标用户 `~/.zsh/`：
-  - `zsh-users/zsh-autosuggestions`
-  - `zsh-users/zsh-syntax-highlighting`
-  - `romkatv/powerlevel10k`
-- 写入 `~/.zshrc`：p10k 主题 + 两个插件 + 历史记录 + 补全 + 常用别名 + WSL `winhome` 别名
-- 原目录已克隆则跳过（幂等）
-- `chsh -s /bin/zsh` 仅对目标用户执行；不再在配置普通用户时自动为 root 生成 `.zshrc` 与插件目录（如需配置 root，将目标设为 root 后重跑）
+- **合并写入** `/etc/docker/daemon.json`：只替换 `registry-mirrors` 键，**其余配置键原样保留**（原文件先备份为 `daemon.json.bak.<时间戳>`）；文件不存在或无法解析时备份后写入全新内容
+- 重跑时自动读回已配置的镜像源（含候选表之外手工添加的地址），不会用默认选择覆盖你的现有配置
+- 原生 Arch 下 `systemctl restart docker` 使其生效；WSL/无 systemd 下重启后 dockerd 启动时自动读取
 
-> 首次进入 zsh 后，powerlevel10k 会引导完成个性化配置（字体/样式）。
+### Shell 与美化（Zsh / 插件 / 提示符）
 
-### NeoVim (LazyVim)
+Zsh 本体与美化彻底解耦，按需组合：
 
-- **前置依赖**（单独作为 nvim 步骤前置安装）：`ripgrep fd unzip lazygit fzf nodejs npm gcc make`
-- 备份现有 `~/.config/nvim`、`~/.local/share/nvim`、`~/.local/state/nvim`、`~/.cache/nvim` 为 `*.bak.<时间戳>`
-- 克隆 [LazyVim/starter](https://github.com/LazyVim/starter) 到目标用户 `~/.config/nvim`，移除 `.git`
-- 仅修正 nvim 目录 owner，不改写整个 `~/.config`
+- **Zsh（设为默认 Shell）**：安装 `zsh zsh-completions`（若未装）、`/bin/zsh` 写入 `/etc/shells`（若缺）、写入基础 `~/.zshrc`（历史/补全/别名/WSL `winhome`，**不含任何主题与插件**）、`chsh -s /bin/zsh` 仅对目标用户执行
+- **Zsh 插件**（缩进子项，勾选 Zsh 后出现且**默认全选**）：按包勾选 `zsh-autosuggestions` / `zsh-syntax-highlighting`，克隆到目标用户 `~/.zsh/` 并在 `.zshrc` 中 source；原目录已克隆则跳过（幂等）
+- **终端提示符**（单选子菜单，与 Zsh 解耦）：
+  - **Powerlevel10k**：zsh 专属主题，git clone 到 `~/.zsh/powerlevel10k`；**选中时自动勾选 Zsh（插件随之默认全选）**；首次登录触发个性化向导
+  - **starship**：跨 Shell 提示符，pacman 安装；勾了 Zsh 则 `.zshrc` 生成 `starship init`，未勾 Zsh 仅安装包（bash 用户自行在 `~/.bashrc` 添加 eval）
+  - p10k 与 starship **互斥**生成配置——旧版模板两者叠加加载、starship 覆盖 p10k 的冲突已修复
+  - **字体自动安装**：选中任一提示符后，`ttf-meslo-nerd / noto-fonts-cjk / noto-fonts-emoji` 作为依赖自动安装（p10k 图标必需 Nerd 字体；`--needed` 幂等），不再作为菜单项
+- **级联**：取消 Zsh 自动取消 Zsh 插件并重置 p10k（starship 保留）；已配置的 `.zshrc`（含旧版"美化版"标识）与插件目录、提示符均预检测锁定
+- `~/.zshrc` 由脚本按当前选择动态生成；zoxide 装了会自动加载（同旧版）
+
+### 终端编辑器 / LazyVim (NeoVim)
+
+- **终端编辑器组**（CLI 增强）：`neovim / helix / micro` 按包勾选安装（helix 自带 LSP 无需配置分发；micro 开箱即用）；**子菜单中新勾选 neovim 时，LazyVim 配置自动勾选**（可再手动取消）
+- **LazyVim 配置**（缩进子项，编辑器组里勾选 neovim 后出现）：
+  - **前置依赖**（随 LazyVim 安装）：`neovim ripgrep fd unzip lazygit fzf nodejs npm gcc make`
+  - 备份现有 `~/.config/nvim`、`~/.local/share/nvim`、`~/.local/state/nvim`、`~/.cache/nvim` 为 `*.bak.<时间戳>`
+  - 克隆 [LazyVim/starter](https://github.com/LazyVim/starter) 到目标用户 `~/.config/nvim`，移除 `.git`
+  - 仅修正 nvim 目录 owner，不改写整个 `~/.config`；取消 neovim 勾选后该项自动收起
 
 > 首次 `nvim` 启动会自动下载插件，请保持网络畅通。
 
 ## 结束时汇总
 
-脚本执行完后统一打印三类提示，避免在长日志中翻找：
+脚本执行完后统一打印：
 
 | 分类 | 含义 |
 |------|------|
-| **需立即处理** | 需要你现在执行的操作（如 `newgrp docker`、重登加载 zsh、首次启动 nvim） |
-| **重启后自动生效** | 无需你操作，重启/重连后自动生效（如 WSL systemd、WSL 默认用户、daemon.json） |
 | **失败项汇总** | 安装或配置失败但脚本继续的项，附手动修复命令，便于复查 |
+| **重启后自动生效** | 无需操作，仅供知晓（如 docker 组、wheel 组、WSL systemd、默认登录用户、p10k 首次向导、nvim 首次启动下载插件等） |
+
+末尾附一句统一建议：**重启系统（WSL: 在 Windows 执行 `wsl --shutdown` 后重新打开终端）使全部配置生效**。不再输出"需立即处理"类提示——此类事项（组变更、服务自启、zsh 加载）重启后均自动解决，输出只会造成困扰。
 
 ## 注意事项
 
+- **换行固定 LF**：仓库根目录 `.gitattributes`（`* text=auto eol=lf`）保证任何平台 checkout 后脚本都是 Linux 换行，可直接 `./arch-setup.py` 执行。即便文件后来被改成 CRLF（如 Windows 编辑器另存），stage 0 自愈机制仍可通过 `sh arch-setup.py` 启动并自动去 CR 重执行
 - 脚本会修改系统级文件（`/etc/pacman.conf`、`/etc/sudoers.d`、`/etc/shells`、`/etc/wsl.conf` 等），建议在全新系统执行；重要数据请先备份
 - 已存在的配置目录会被备份而非删除，可手动恢复
 - 重复执行不会破坏已克隆的插件目录；含本脚本标识的 `~/.zshrc` 会跳过覆盖，LazyVim starter 若已有 `init.lua` + `lua/` 也跳过（先备份旧 nvim 目录）
+- 执行结束前脚本会把目标用户家目录中脚本触碰过的路径属主统一修正为该用户（兜底清扫），避免中断残留 root 属主文件
 - WSL 下 docker 服务需自行处理（见 Docker 章节）
+- 脚本定位为**全新系统的初始配置**：重跑可安全追加软件包，但不做配置文件的增量合并管理（除 daemon.json 外，用户级配置以"已配置即跳过"为准）
 
 ## 目录结构
 
