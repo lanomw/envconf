@@ -134,6 +134,7 @@ sudo sh arch-setup.py
 - `useradd -m -G wheel -s /bin/bash <name>`
 - 交互式 `passwd` 设置密码
 - **sudo 保障**（新建与已有用户均执行，在基础软件包装好之后）：确保 sudo 已安装 → `usermod -aG wheel` → 写入 `/etc/sudoers.d/99-wheel` 启用 wheel 组 sudo → 校验用户确在 wheel 组。全新系统上 `/etc/sudoers` 尚不存在，脚本会先装 sudo 再写配置（旧版在装 sudo 之前写配置导致静默落空、新用户无法 sudo）
+- **家目录属主保障**：新建用户的家目录在执行结束前**整树递归校验属主为该用户**——即使某步骤在"写入与 chown 之间"被打断也不会残留 root 属主文件；`~/.zshrc` 等配置文件先建空文件取得用户属主、再写入内容。已有用户则仅修正脚本触碰过的路径，不扩大范围
 - WSL 下若选择设为默认登录用户，写入 `/etc/wsl.conf` 的 `[user] default=<name>`，重启 WSL 后自动生效（无需手动操作）
 
 ### 镜像源

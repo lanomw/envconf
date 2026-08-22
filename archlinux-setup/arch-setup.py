@@ -258,12 +258,24 @@ def bash_as(user, script):
 
 
 def chown_r(path, user, group=None):
+    """递归修正属主。path 为普通文件时须单独处理：
+
+    新版 Python 的 os.walk() 对非目录路径返回空迭代器（旧版会把文件
+    自身 yield 一次），若只靠 walk 循环，对文件调用 chown_r 会整体落空
+    ——这正是 .zshrc 残留 root 属主的根因。
+    """
     if not os.path.exists(path):
         return
     if group is None:
         group = group_name(user)
     uid = pwd.getpwnam(user).pw_uid
     gid = grp.getgrnam(group).gr_gid
+    if not os.path.isdir(path):
+        try:
+            os.chown(path, uid, gid)
+        except OSError:
+            pass
+        return
     for root, dirs, files in os.walk(path):
         for name in dirs + files:
             p = os.path.join(root, name)
@@ -1324,6 +1336,11 @@ def run_zsh(st, reboot, failures):
             shutil.copy2(rc, bak)
             warn("已备份原 .zshrc")
             chown_r(bak, t)
+        if not os.path.exists(rc):
+            # 先建空文件并立即归给用户再写内容：即使写入中途被打断，
+            # 属主也不会停在 root（对已存在的文件，root 重写不改变属主）
+            open(rc, "w").close()
+            chown_r(rc, t)
         with open(rc, "w") as f:
             f.write(build_zsh_config(st))
     chown_r(rc, t)
@@ -1965,7 +1982,7 @@ def resolve_target(st):
 # ---------------------------------------------------------------------------
 
 def sweep_owner(st):
-    """最终兜底：把目标用户家目录中脚本触碰过的路径属主修正为该用户。
+    """最终兜底：确保目标用户家目录中脚本产出的文件属主为该用户。
 
     各步骤内部已有 chown 修正，但任一步骤在"写入"与"修正"之间被打断，
     就会残留 root 属主文件，用户此后改不了自己的配置（.zshrc/.p10k.zsh
@@ -1976,6 +1993,14 @@ def sweep_owner(st):
         return
     home = user_home(t)
     uid = pwd.getpwnam(t).pw_uid
+    if st.get("create_user"):
+        # 新建用户：家目录全程由脚本经手，整树归一为该用户——
+        # 兑现"用户目录下文件的所有者都属于该用户"；目录树刚建，代价可忽略
+        chown_r(home, t)
+        ok("已将新建用户家目录整树属主修正为 %s (%s)" % (t, home))
+        return
+    # 已有用户：只修正脚本触碰过的路径，不扩大到他人现有文件
+    # （可能存在刻意 root 属主的文件，大目录整树递归也慢）
     try:
         if os.stat(home).st_uid != uid:
             # 家目录本身属主不对（如手动建用户后 root 复制过文件），整树修正
