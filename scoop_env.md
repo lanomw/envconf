@@ -15,6 +15,8 @@ rm .\install.ps1
 
 ## 安装软件包
 ```shell
+scoop bucket add extras
+scoop bucket add versions
 scoop bucket add dorado https://github.com/chawyehsu/dorado
 
 scoop install 7zip git gsudo scoop-completion starship
