@@ -21,11 +21,11 @@ scoop bucket add versions
 scoop bucket add dorado https://github.com/chawyehsu/dorado
 
 scoop install 7zip git gsudo scoop-completion starship
-scoop install busybox curl fzf
-scoop install cmake make python llvm-mingw openocd nodejs
-scoop install neovim luarocks fd lazygit ripgrep
-scoop install snipaste sumatrapdf pandoc windterm wireshark SpaceSniffer
-scoop install sublime-text marktext potplayer
+scoop install busybox curl fzf fd lazygit ripgrep
+scoop install gcc-arm-none-eabi cmake make ninja llvm-mingw openocd
+scoop install python nodejs luarocks
+scoop install neovim sublime-text marktext pandoc
+scoop install snipaste sumatrapdf potplayer windterm wireshark SpaceSniffer
 ```
 注：如果使用msys环境则无需安装`llvm-mingw、cmake、make`
 
