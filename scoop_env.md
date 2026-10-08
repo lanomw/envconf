@@ -8,6 +8,7 @@
 管理员执行命令`Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`允许执行本地脚本
 
 ```shell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 irm get.scoop.sh -OutFile 'install.ps1'
 .\install.ps1 -RunAsAdmin -ScoopDir 'D:\Scoop'
 rm .\install.ps1
@@ -21,9 +22,10 @@ scoop bucket add dorado https://github.com/chawyehsu/dorado
 
 scoop install 7zip git gsudo scoop-completion starship
 scoop install busybox curl fzf
-scoop install cmake make python llvm-mingw
+scoop install cmake make python llvm-mingw openocd nodejs
 scoop install neovim luarocks fd lazygit ripgrep
 scoop install snipaste sumatrapdf pandoc windterm wireshark SpaceSniffer
+scoop install sublime-text marktext potplayer
 ```
 注：如果使用msys环境则无需安装`llvm-mingw、cmake、make`
 
