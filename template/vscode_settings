@@ -122,4 +122,5 @@
     "git.suggestSmartCommit": false,
     "git.confirmSync": false,
     "explorer.autoReveal": false,
+    "cmake.configureOnOpen": false,
 }
