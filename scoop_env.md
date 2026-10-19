@@ -16,16 +16,22 @@ rm .\install.ps1
 
 ## 安装软件包
 ```shell
+# 导入代理
+$env:all_proxy="http://127.0.0.1:7890"
+
+scoop install 7zip git gsudo scoop-completion starship
 scoop bucket add extras
 scoop bucket add versions
 scoop bucket add dorado https://github.com/chawyehsu/dorado
 
-scoop install 7zip git gsudo scoop-completion starship
 scoop install busybox curl fzf fd lazygit ripgrep
 scoop install gcc-arm-none-eabi cmake make ninja llvm-mingw openocd
 scoop install python nodejs luarocks
 scoop install neovim sublime-text marktext pandoc
 scoop install snipaste sumatrapdf potplayer windterm wireshark SpaceSniffer
+
+# 清理缓存
+scoop cache rm * && scoop cleanup *
 ```
 注：如果使用msys环境则无需安装`llvm-mingw、cmake、make`
 
