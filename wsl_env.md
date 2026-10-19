@@ -12,3 +12,5 @@ wsl --install
 # arch离线安装示例
 wsl --install --from-file C:\Users\atk\Downloads\archlinux-2026.08.01.174141.wsl --location E:\WSL\ArchLinux
 ```
+
+安装后后，执行`wsl -d root`进入wsl并执行脚本`archlinux-setup/arch-setup.py`
