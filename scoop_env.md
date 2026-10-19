@@ -11,7 +11,7 @@
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 irm get.scoop.sh -OutFile 'install.ps1'
 .\install.ps1 -RunAsAdmin -ScoopDir 'D:\Scoop'
-rm .\install.ps1
+rd .\install.ps1
 ```
 
 ## 安装软件包
